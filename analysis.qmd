@@ -4,5 +4,243 @@ format: html
 editor: visual
 ---
 
+## Parameters
+
+The data to the data:
+
+```{r}
+data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/typhoid/")
+```
+
 ## Packages
 
+Needed packages:
+
+```{r}
+needed_packages <- c("readxl", "dplyr", "purrr", "rsample", "parsnip", "probably",
+                     "magrittr", "yardstick", "tidyr")
+```
+
+Making sure that needed packages are installed:
+
+```{r}
+to_install <- needed_packages[! needed_packages %in% installed.packages()[,"Package"]]
+if (length(to_install)) install.packages(to_install)
+```
+
+Loading some of these packages:
+
+```{r message = FALSE}
+library(dplyr)
+library(purrr)
+library(rsample)
+library(parsnip)
+library(recipes)
+library(workflows)
+library(probably)
+library(tune)
+library(yardstick)
+```
+
+
+## Reading and cleaning data
+
+```{r}
+files <- dir(data_path)
+nepal_index <- grep("nepal", files)
+cambd_index <- grep("camb", files)
+```
+
+```{r}
+nepal <- data_path |>
+  paste0(files[nepal_index]) |>
+  readxl::read_excel() |> 
+  rename(WBC       = WBC_gro,
+         platelets = Platelets_gro,
+         vomiting  = `Vomiting...26`) |> 
+  select(- contains("gro"), - contains(">"), - contains("<"), - StudyNo, - Study,
+         - DateStudy, - HospitalNo, - `Vomiting...18`, - culture) |> 
+  mutate(across(c(Age, Pulse, platelets, AST, ALT, Fever, Cough, Diarrhoea, vomiting,
+                  Abdopain, Constipation, Headache, Anorexia, Nausea), as.integer),
+         across(c(scorev1, scorev2, scorev3, scorev4, Score8),
+                ~ factor(.x, ordered = TRUE)),
+         across(c(Splenomegaly, Hepatomegaly),
+                ~ .x == "1" | .x == "TRUE" | .x == "Yes"),
+         across(Sex, ~ c("female", "male")[(.x == "1" | .x == "Male") + 1]),
+         across(Typhoid_IgM,
+                ~ factor(sub("N", "0", substring(.x, 1, 1)), ordered = TRUE)),
+         across(`CRP_mg/L`, ~ factor(sub(" *\\(.*\\).*$", "", .x),
+                                     levels = c("<10", "10-40", "40-80", ">80"),
+                                     ordered = TRUE)),
+         across(BloodCSResult, ~ .x == "SPA" | .x == "ST")) |> 
+  select(BloodCSResult, Sex, Age, contains("core"), where(is.integer),
+         where(is.double), everything())
+```
+
+```{r}
+cambodia <- readxl::read_excel(paste0(data_path, files[cambd_index]))
+```
+
+## Feature engineering
+
+Nepal data set:
+
+```{r}
+nepal2 <- nepal |> 
+  mutate(across(c(Cough, Diarrhoea, vomiting, Abdopain, Constipation, Headache,
+                  Anorexia, Nausea, Typhoid_IgM), ~ .x > 0),
+         across(`CRP_mg/L`, ~ .x != "<10"),
+         across(Fever, ~ .x > 4),
+         across(OralTemperature, ~ .x >= 39),
+         `pulse<100` = Pulse < 100,
+         `pulse>120` = Pulse > 120,
+         across(where(is.logical), as.factor)) |> 
+  select(BloodCSResult, Sex, Age, contains("core"), where(is.logical), everything())
+```
+
+
+## Logistic regression
+
+```{r}
+nepal3 <- nepal2[, c(1, 9:17)]
+data_split <- initial_split(nepal3)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+
+```{r}
+model <- logistic_reg() |> 
+  set_engine("glm")
+```
+
+```{r}
+recette <- recipe(BloodCSResult ~ ., data = train_data)
+```
+
+```{r}
+wflow <- workflow() |> 
+  add_recipe(recette) |> 
+  add_model(model)
+```
+
+```{r}
+folds <- vfold_cv(train_data)
+```
+
+```{r}
+metrics2 <- metric_set(sens, spec)
+```
+
+```{r}
+compute_metrics2 <- function(fold, epsilon = .01) {
+  thresholds <- seq(epsilon, 1 - epsilon, epsilon)
+  validate_data <- testing(get_rsplit(folds, fold))
+  
+  fit(wflow, data = training(get_rsplit(folds, fold))) |> 
+    predict(validate_data, type = "prob") |>
+    bind_cols(validate_data) |> 
+    threshold_perf(BloodCSResult, .pred_FALSE, thresholds) |> 
+    mutate(fold = fold)
+}
+```
+
+```{r}
+the_metrics <- folds |> 
+  nrow() |> 
+  seq_len() |>
+  map_dfr(compute_metrics2)
+```
+
+```{r}
+the_metrics2 <- the_metrics |> 
+  group_by(.threshold, .metric) |> 
+  summarise(estimate = mean(.estimate)) |> 
+  ungroup()
+```
+
+```{r}
+lwd_val <- 4
+lines2 <- function(...) lines(..., lwd = lwd_val)
+plot2 <- function(...) plot(..., asp = 1, xaxs = "i", yaxs = "i")
+
+opar <- par(pty = "s")
+
+the_metrics |> 
+  filter(.metric == "sensitivity") |> 
+  with(plot2(.threshold, .estimate, col = 4,
+             xlab = "probability threshold", ylab = "metric"))
+
+the_metrics |> 
+  filter(.metric == "specificity") |> 
+  with(points(.threshold, .estimate, col = 2))
+
+the_metrics |> 
+  filter(.metric == "j_index") |> 
+  with(points(.threshold, .estimate, col = 3))
+
+the_metrics2 |> 
+  filter(.metric == "sensitivity") |> 
+  with(lines2(.threshold, estimate, col = 4))
+
+the_metrics2 |> 
+  filter(.metric == "specificity") |> 
+  with(lines2(.threshold, estimate, col = 2))
+
+the_metrics2 |> 
+  filter(.metric == "j_index") |> 
+  with(lines2(.threshold, estimate, col = 3))
+
+tuned_threshold <- the_metrics2 |> 
+  filter(.metric == "j_index") |> 
+  filter(estimate == max(estimate)) |> 
+  pull(.threshold)
+
+abline(v = tuned_threshold, lwd = lwd_val)
+
+
+legend("left", legend = c("sensitivity", "specificity", "j index"),
+       col = c(2, 4, 3), lwd = lwd_val, bty = "n")
+box(bty = "o")
+par(opar)
+```
+
+ROC curve:
+
+```{r}
+opar <- par(pty = "s")
+
+the_metrics3 <- the_metrics2 |> 
+  filter(.metric != "j_index") |> 
+  tidyr::pivot_wider(names_from = .metric, values_from = estimate)
+
+with(the_metrics3, plot2(1 - specificity, sensitivity, type = "l", lwd = lwd_val))
+
+abline(0, 1)
+
+box(bty = "o")
+par(opar)
+```
+
+AUC:
+
+```{r}
+.5 + with(the_metrics3, sum(.01 * (sensitivity + specificity - 1)))
+```
+
+Testing:
+
+```{r}
+to_evaluate <- wflow |>
+  fit(data = train_data) |> 
+  predict(test_data, type = "prob") |>
+  mutate(predictions = make_two_class_pred(.pred_FALSE, c("FALSE", "TRUE"),
+                                           tuned_threshold)) |> 
+  bind_cols(test_data)
+```
+
+```{r}
+metrics2(to_evaluate, BloodCSResult, estimate = predictions)
+conf_mat(to_evaluate, BloodCSResult, predictions)
+```
