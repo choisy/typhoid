@@ -238,4 +238,3 @@ Let's evaluate:
 conf_mat(to_evaluate, BloodCSResult, predictions)
 metric_set(sens, spec)(to_evaluate, BloodCSResult, estimate = predictions)
 ```
-
