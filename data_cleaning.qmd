@@ -1,0 +1,95 @@
+---
+title: "Data cleaning"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r include = FALSE}
+knitr::opts_chunk$set(fig.retina = 2,
+                      fig.align  = "center")
+```
+
+## Parameters
+
+The path to the raw data:
+
+```{r}
+data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/typhoid/")
+```
+
+## Packages
+
+required packages:
+
+```{r}
+required_packages <- c("readxl", "dplyr")
+```
+
+Making sure that needed packages are installed:
+
+```{r}
+to_inst <- required_packages[! required_packages %in% installed.packages()[,"Package"]]
+if (length(to_inst)) install.packages(to_inst)
+```
+
+Loading some of these packages:
+
+```{r message = FALSE}
+library(dplyr)
+```
+
+## Reading and cleaning data
+
+Identifying the datasets in the folder:
+
+```{r}
+files <- dir(data_path)
+nepal_index <- grep("nepa", files)
+cambb_index <- grep("camb", files)
+```
+
+Reading and cleaning data from Nepal:
+
+```{r}
+nepal <- data_path |>
+  paste0(files[nepal_index]) |>
+  readxl::read_excel() |> 
+  rename(WBC       = WBC_gro,
+         platelets = Platelets_gro,
+         vomiting  = `Vomiting...26`) |> 
+  select(- contains("gro"), - contains(">"), - contains("<"), - StudyNo, - Study,
+         - DateStudy, - HospitalNo, - `Vomiting...18`, - culture) |> 
+  mutate(across(c(Age, Pulse, platelets, AST, ALT, Fever, Cough, Diarrhoea, vomiting,
+                  Abdopain, Constipation, Headache, Anorexia, Nausea), as.integer),
+         across(c(scorev1, scorev2, scorev3, scorev4, Score8),
+                ~ factor(.x, ordered = TRUE)),
+         across(c(Splenomegaly, Hepatomegaly),
+                ~ .x == "1" | .x == "TRUE" | .x == "Yes"),
+         across(Sex, ~ c("female", "male")[(.x == "1" | .x == "Male") + 1]),
+         across(Typhoid_IgM,
+                ~ factor(sub("N", "0", substring(.x, 1, 1)), ordered = TRUE)),
+         across(`CRP_mg/L`, ~ factor(sub(" *\\(.*\\).*$", "", .x),
+                                     levels = c("<10", "10-40", "40-80", ">80"),
+                                     ordered = TRUE)),
+         across(BloodCSResult, ~ .x == "SPA" | .x == "ST")) |> 
+  select(BloodCSResult, Sex, Age, contains("core"), where(is.integer),
+         where(is.double), everything())
+```
+
+Reading and cleaning data from Cambodia and Bengladesh:
+
+```{r}
+cambodia_bangladesh <- readxl::read_excel(paste0(data_path, files[cambb_index]))
+```
+
+Saving to disk:
+
+```{r}
+saveRDS(nepal, "nepal.rds")
+```
+
+

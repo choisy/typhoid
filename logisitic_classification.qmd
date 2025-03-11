@@ -1,27 +1,22 @@
 ---
-title: "Enteric fever diagnosis"
+title: "Logistic classification"
 format: html
 editor: visual
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r include = FALSE}
-#knitr::opts_chunk$set(margin = TRUE, prompt = TRUE, comment = "",
-#                      collapse = TRUE, cache = FALSE, autodep = TRUE,
-#                      dev.args = list(pointsize = 11), fig.height = 3.5,
-#                      fig.width = 4.24725, fig.retina = 2, fig.align = "center")
-
-knitr::opts_chunk$set(fig.retina = 2, fig.align = "center")
+knitr::opts_chunk$set(fig.retina = 2,
+                      fig.align  = "center")
 ```
 
-
-## Parameters
+## Reading the clean data
 
 The path to the data:
 
 ```{r}
-data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
-                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
-                    "GitHub/choisy/typhoid/")
+nepal <- readRDS("nepal.rds")
 ```
 
 ## Packages
@@ -29,15 +24,15 @@ data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
 required packages:
 
 ```{r}
-required_packages <- c("readxl", "dplyr", "purrr", "rsample", "parsnip", "probably",
-                     "magrittr", "yardstick", "tidyr")
+required_packages <- c("dplyr", "purrr", "rsample", "parsnip", "probably", "magrittr",
+                       "yardstick", "tidyr")
 ```
 
 Making sure that needed packages are installed:
 
 ```{r}
-to_install <- required_packages[! required_packages %in% installed.packages()[,"Package"]]
-if (length(to_install)) install.packages(to_install)
+to_inst <- required_packages[! required_packages %in% installed.packages()[,"Package"]]
+if (length(to_inst)) install.packages(to_inst)
 ```
 
 Loading some of these packages:
@@ -52,45 +47,6 @@ library(workflows)
 library(probably)
 library(tune)
 library(yardstick)
-```
-
-
-## Reading and cleaning data
-
-```{r}
-files <- dir(data_path)
-nepal_index <- grep("nepal", files)
-cambd_index <- grep("camb", files)
-```
-
-```{r}
-nepal <- data_path |>
-  paste0(files[nepal_index]) |>
-  readxl::read_excel() |> 
-  rename(WBC       = WBC_gro,
-         platelets = Platelets_gro,
-         vomiting  = `Vomiting...26`) |> 
-  select(- contains("gro"), - contains(">"), - contains("<"), - StudyNo, - Study,
-         - DateStudy, - HospitalNo, - `Vomiting...18`, - culture) |> 
-  mutate(across(c(Age, Pulse, platelets, AST, ALT, Fever, Cough, Diarrhoea, vomiting,
-                  Abdopain, Constipation, Headache, Anorexia, Nausea), as.integer),
-         across(c(scorev1, scorev2, scorev3, scorev4, Score8),
-                ~ factor(.x, ordered = TRUE)),
-         across(c(Splenomegaly, Hepatomegaly),
-                ~ .x == "1" | .x == "TRUE" | .x == "Yes"),
-         across(Sex, ~ c("female", "male")[(.x == "1" | .x == "Male") + 1]),
-         across(Typhoid_IgM,
-                ~ factor(sub("N", "0", substring(.x, 1, 1)), ordered = TRUE)),
-         across(`CRP_mg/L`, ~ factor(sub(" *\\(.*\\).*$", "", .x),
-                                     levels = c("<10", "10-40", "40-80", ">80"),
-                                     ordered = TRUE)),
-         across(BloodCSResult, ~ .x == "SPA" | .x == "ST")) |> 
-  select(BloodCSResult, Sex, Age, contains("core"), where(is.integer),
-         where(is.double), everything())
-```
-
-```{r}
-cambodia <- readxl::read_excel(paste0(data_path, files[cambd_index]))
 ```
 
 ## Feature engineering
@@ -109,7 +65,6 @@ nepal2 <- nepal |>
          across(where(is.logical), as.factor)) |> 
   select(BloodCSResult, Sex, Age, contains("core"), where(is.logical), everything())
 ```
-
 
 ## A classifier based on logistic regression
 
@@ -150,25 +105,15 @@ wflow <- workflow() |>
   add_model(model)
 ```
 
-
 ### Making and training a classifier
 
-So far with have a logistic regression model. It can be used as such as a classifier,
-in which case it will by default assign `TRUE` to a probability above 0.5 and `FALSE`
-otherwise. But maybe this 0.5 probability threshold is not the optimal value for the
-classification task. This threshold can be considered as a hyper-parameter to be tuned.
-Here is the task is quite easy since there is only one hyper-parameter and that this
-hyper-parameter is constrained to be between 0 and 1. We can thus do an exhaustive
-search. To do so we will do a 10-fold cross validation scheme to make sure that the
-value of the hyper-parameter is assessed on unseen data.
+So far with have a logistic regression model. It can be used as such as a classifier, in which case it will by default assign `TRUE` to a probability above 0.5 and `FALSE` otherwise. But maybe this 0.5 probability threshold is not the optimal value for the classification task. This threshold can be considered as a hyper-parameter to be tuned. Here is the task is quite easy since there is only one hyper-parameter and that this hyper-parameter is constrained to be between 0 and 1. We can thus do an exhaustive search. To do so we will do a 10-fold cross validation scheme to make sure that the value of the hyper-parameter is assessed on unseen data.
 
 ```{r}
 folds <- vfold_cv(train_data)
 ```
 
-The following function fit the logistic regression on the training set of a given
-`fold` and then compute the performance metrics for threshold values varying between
-`epsilon` and `1 - epsilon` by step of `epsilon` on the evaluation set of the `fold`.
+The following function fit the logistic regression on the training set of a given `fold` and then compute the performance metrics for threshold values varying between `epsilon` and `1 - epsilon` by step of `epsilon` on the evaluation set of the `fold`.
 
 ```{r}
 compute_metrics2 <- function(fold, epsilon = .01) {
@@ -293,7 +238,4 @@ Let's evaluate:
 conf_mat(to_evaluate, BloodCSResult, predictions)
 metric_set(sens, spec)(to_evaluate, BloodCSResult, estimate = predictions)
 ```
-
-## Crafting a score
-
 

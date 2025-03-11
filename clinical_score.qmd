@@ -1,0 +1,111 @@
+---
+title: "Generating a clinical score"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r include = FALSE}
+knitr::opts_chunk$set(fig.retina = 2,
+                      fig.align  = "center",
+                      warning    = FALSE)
+```
+
+## Packages
+
+required packages:
+
+```{r}
+required_packages <- c("dplyr", "AutoScore")
+```
+
+Making sure that needed packages are installed:
+
+```{r}
+to_inst <- required_packages[! required_packages %in% installed.packages()[,"Package"]]
+if (length(to_inst)) install.packages(to_inst)
+```
+
+Loading some of these packages:
+
+```{r message = FALSE}
+library(dplyr)
+library(AutoScore)
+```
+
+## Loading the data
+
+```{r}
+nepal <- readRDS("nepal.rds")
+```
+
+## Feature engineering
+
+Nepal data set:
+
+```{r}
+nepal2 <- nepal |> 
+  mutate(across(c(Cough, Diarrhoea, vomiting, Abdopain, Constipation, Headache,
+                  Anorexia, Nausea, Typhoid_IgM), ~ .x > 0),
+         across(where(is.character), as.factor)) |> 
+  rename(label = BloodCSResult,
+         CRP   = `CRP_mg/L`) |> 
+  na.exclude()
+```
+
+Checking the data:
+
+```{r}
+check_data(nepal2)
+```
+
+## Spliting the data
+
+```{r}
+out_split <- split_data(nepal2, c(0.7, 0.1, 0.2), strat_by_label = FALSE)
+train_set <- out_split$train_set
+validation_set <- out_split$validation_set
+test_set <- out_split$test_set
+```
+
+## Step 1: generate variable ranking list
+
+```{r}
+ranking_rf <- AutoScore_rank(train_set, method = "rf", ntree = 100)
+```
+
+```{r}
+ranking_auc <- AutoScore_rank(train_set, validation_set, "auc")
+```
+
+## Step 2: select variables with parsimony plot
+
+```{r}
+AutoScore_parsimony2 <- function(...) {
+  AutoScore_parsimony(train_set, validation_set, n_max = 10,
+                      cross_validation = TRUE, ...)
+}
+```
+
+```{r}
+AutoScore_parsimony2qtl <- function(rank, quantiles, ...) {
+  AutoScore_parsimony2(rank = rank,
+                       categorize = "quantile", quantiles = quantiles, ...)
+}
+```
+
+```{r}
+AutoScore_parsimony2kms <- function(rank, max_cluster, ...) {
+  AutoScore_parsimony2(rank = rank,
+                       categorize = "k_means", max_cluster = max_cluster, ...)
+}
+```
+
+```{r}
+AUC_rf_qtl <- AutoScore_parsimony2qtl(ranking_rf, c(0, 0.05, 0.2, 0.8, 0.95, 1))
+```
+
+```{r}
+AUC_rf_kms <- AutoScore_parsimony2kms(ranking_rf, 2)
+```
