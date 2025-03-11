@@ -4,9 +4,19 @@ format: html
 editor: visual
 ---
 
+```{r include = FALSE}
+#knitr::opts_chunk$set(margin = TRUE, prompt = TRUE, comment = "",
+#                      collapse = TRUE, cache = FALSE, autodep = TRUE,
+#                      dev.args = list(pointsize = 11), fig.height = 3.5,
+#                      fig.width = 4.24725, fig.retina = 2, fig.align = "center")
+
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center")
+```
+
+
 ## Parameters
 
-The data to the data:
+The path to the data:
 
 ```{r}
 data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
@@ -16,17 +26,17 @@ data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
 
 ## Packages
 
-Needed packages:
+required packages:
 
 ```{r}
-needed_packages <- c("readxl", "dplyr", "purrr", "rsample", "parsnip", "probably",
+required_packages <- c("readxl", "dplyr", "purrr", "rsample", "parsnip", "probably",
                      "magrittr", "yardstick", "tidyr")
 ```
 
 Making sure that needed packages are installed:
 
 ```{r}
-to_install <- needed_packages[! needed_packages %in% installed.packages()[,"Package"]]
+to_install <- required_packages[! required_packages %in% installed.packages()[,"Package"]]
 if (length(to_install)) install.packages(to_install)
 ```
 
@@ -101,23 +111,38 @@ nepal2 <- nepal |>
 ```
 
 
-## Logistic regression
+## A classifier based on logistic regression
+
+### A logistic regression model
+
+Let's start with a simple example where we consider only the symptom variables:
 
 ```{r}
 nepal3 <- nepal2[, c(1, 9:17)]
+```
+
+Let's create the train and test data sets:
+
+```{r}
 data_split <- initial_split(nepal3)
 train_data <- training(data_split)
 test_data <- testing(data_split)
 ```
+
+Defining the logistic regression:
 
 ```{r}
 model <- logistic_reg() |> 
   set_engine("glm")
 ```
 
+The formula of the classifier:
+
 ```{r}
 recette <- recipe(BloodCSResult ~ ., data = train_data)
 ```
+
+Let's put the logistic regression and the formula together:
 
 ```{r}
 wflow <- workflow() |> 
@@ -125,13 +150,25 @@ wflow <- workflow() |>
   add_model(model)
 ```
 
+
+### Making and training a classifier
+
+So far with have a logistic regression model. It can be used as such as a classifier,
+in which case it will by default assign `TRUE` to a probability above 0.5 and `FALSE`
+otherwise. But maybe this 0.5 probability threshold is not the optimal value for the
+classification task. This threshold can be considered as a hyper-parameter to be tuned.
+Here is the task is quite easy since there is only one hyper-parameter and that this
+hyper-parameter is constrained to be between 0 and 1. We can thus do an exhaustive
+search. To do so we will do a 10-fold cross validation scheme to make sure that the
+value of the hyper-parameter is assessed on unseen data.
+
 ```{r}
 folds <- vfold_cv(train_data)
 ```
 
-```{r}
-metrics2 <- metric_set(sens, spec)
-```
+The following function fit the logistic regression on the training set of a given
+`fold` and then compute the performance metrics for threshold values varying between
+`epsilon` and `1 - epsilon` by step of `epsilon` on the evaluation set of the `fold`.
 
 ```{r}
 compute_metrics2 <- function(fold, epsilon = .01) {
@@ -146,12 +183,16 @@ compute_metrics2 <- function(fold, epsilon = .01) {
 }
 ```
 
+Calling this function for the folds and gathering the output in a data frame:
+
 ```{r}
 the_metrics <- folds |> 
   nrow() |> 
   seq_len() |>
   map_dfr(compute_metrics2)
 ```
+
+Computing the mean of the metrics across the folds:
 
 ```{r}
 the_metrics2 <- the_metrics |> 
@@ -160,13 +201,16 @@ the_metrics2 <- the_metrics |>
   ungroup()
 ```
 
-```{r}
+Displaying the metrics and the optimal value of the hyper-parameter:
+
+```{r fig.width = 1.2 * 7, fig.height = 1.2 * 5}
 lwd_val <- 4
 lines2 <- function(...) lines(..., lwd = lwd_val)
 plot2 <- function(...) plot(..., asp = 1, xaxs = "i", yaxs = "i")
 
-opar <- par(pty = "s")
+opar <- par(pty = "s", mfrow = 1:2)
 
+# Left panel:
 the_metrics |> 
   filter(.metric == "sensitivity") |> 
   with(plot2(.threshold, .estimate, col = 4,
@@ -199,16 +243,11 @@ tuned_threshold <- the_metrics2 |>
 
 abline(v = tuned_threshold, lwd = lwd_val)
 
-
 legend("left", legend = c("sensitivity", "specificity", "j index"),
        col = c(2, 4, 3), lwd = lwd_val, bty = "n")
 box(bty = "o")
-par(opar)
-```
 
-ROC curve:
-
-```{r}
+# ROC curve:
 opar <- par(pty = "s")
 
 the_metrics3 <- the_metrics2 |> 
@@ -218,18 +257,26 @@ the_metrics3 <- the_metrics2 |>
 with(the_metrics3, plot2(1 - specificity, sensitivity, type = "l", lwd = lwd_val))
 
 abline(0, 1)
-
 box(bty = "o")
+
 par(opar)
 ```
 
-AUC:
+The tuned hyper-parameter value is
+
+```{r}
+tuned_threshold
+```
+
+The value of the AUC is:
 
 ```{r}
 .5 + with(the_metrics3, sum(.01 * (sensitivity + specificity - 1)))
 ```
 
-Testing:
+### Testing the classifier on the test data set:
+
+Preparing the data to evaluate:
 
 ```{r}
 to_evaluate <- wflow |>
@@ -240,7 +287,13 @@ to_evaluate <- wflow |>
   bind_cols(test_data)
 ```
 
+Let's evaluate:
+
 ```{r}
-metrics2(to_evaluate, BloodCSResult, estimate = predictions)
 conf_mat(to_evaluate, BloodCSResult, predictions)
+metric_set(sens, spec)(to_evaluate, BloodCSResult, estimate = predictions)
 ```
+
+## Crafting a score
+
+
