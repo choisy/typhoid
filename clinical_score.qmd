@@ -1,5 +1,5 @@
 ---
-title: "Generating a clinical score"
+title: "Random forest classification"
 format: html
 editor: visual
 editor_options: 
@@ -8,36 +8,48 @@ editor_options:
 
 ```{r include = FALSE}
 knitr::opts_chunk$set(fig.retina = 2,
-                      fig.align  = "center",
-                      warning    = FALSE)
+                      fig.align  = "center")
+```
+
+## Parameters
+
+The path to the data folder:
+
+```{r}
+data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/typhoid/")
 ```
 
 ## Packages
 
-required packages:
+The required packages:
 
 ```{r}
-required_packages <- c("dplyr", "AutoScore")
+required_packages <- c("dplyr", "rsample")
 ```
 
-Making sure that needed packages are installed:
+Making sure that the required packages are installed:
 
 ```{r}
 to_inst <- required_packages[! required_packages %in% installed.packages()[,"Package"]]
 if (length(to_inst)) install.packages(to_inst)
+rm(required_packages, to_inst)
 ```
 
 Loading some of these packages:
 
 ```{r message = FALSE}
 library(dplyr)
-library(AutoScore)
+library(rsample)
 ```
 
-## Loading the data
+## Reading the clean data
+
+The path to the data:
 
 ```{r}
-nepal <- readRDS("nepal.rds")
+nepal <- readRDS(paste0(data_path, "clean_data/nepal.rds"))
 ```
 
 ## Feature engineering
@@ -47,65 +59,237 @@ Nepal data set:
 ```{r}
 nepal2 <- nepal |> 
   mutate(across(c(Cough, Diarrhoea, vomiting, Abdopain, Constipation, Headache,
-                  Anorexia, Nausea, Typhoid_IgM), ~ .x > 0),
-         across(where(is.character), as.factor)) |> 
-  rename(label = BloodCSResult,
-         CRP   = `CRP_mg/L`) |> 
+                  Anorexia, Nausea, Typhoid_IgM), ~ .x > 0)) |> 
   na.exclude()
 ```
 
-Checking the data:
-
 ```{r}
-check_data(nepal2)
+nepal3 <- select(nepal2, BloodCSResult, Cough:Hepatomegaly)
 ```
 
 ## Spliting the data
 
+Let's create the train and test data sets:
+
 ```{r}
-out_split <- split_data(nepal2, c(0.7, 0.1, 0.2), strat_by_label = FALSE)
-train_set <- out_split$train_set
-validation_set <- out_split$validation_set
-test_set <- out_split$test_set
+data_split <- initial_split(nepal3)
+train_data <- training(data_split)
+test_data <- testing(data_split)
 ```
 
-## Step 1: generate variable ranking list
+## Some utilitary functions
 
 ```{r}
-ranking_rf <- AutoScore_rank(train_set, method = "rf", ntree = 100)
-```
-
-```{r}
-ranking_auc <- AutoScore_rank(train_set, validation_set, "auc")
-```
-
-## Step 2: select variables with parsimony plot
-
-```{r}
-AutoScore_parsimony2 <- function(...) {
-  AutoScore_parsimony(train_set, validation_set, n_max = 10,
-                      cross_validation = TRUE, ...)
+moving_average <- function(x, w = 20) {
+  x |>
+    seq_along() |> 
+    map(~ tail(c(0, x), -.x)) |> 
+    head(-w  + 1) |> 
+    map(head, w) |> 
+    map_dbl(mean)
 }
 ```
 
 ```{r}
-AutoScore_parsimony2qtl <- function(rank, quantiles, ...) {
-  AutoScore_parsimony2(rank = rank,
-                       categorize = "quantile", quantiles = quantiles, ...)
+plot_smooth <- function(x, w, data = nepal3) {
+  data[order(data[[x]]), ] |> 
+    select({{ x }}, BloodCSResult) |> 
+    map_dfc(moving_average, w) |> 
+    plot(col = 4)
 }
 ```
 
 ```{r}
-AutoScore_parsimony2kms <- function(rank, max_cluster, ...) {
-  AutoScore_parsimony2(rank = rank,
-                       categorize = "k_means", max_cluster = max_cluster, ...)
+confusion_matrix <- function(threshold) {
+  nepal5 |> 
+    mutate(across(points, ~ .x > threshold)) |> 
+    table()
 }
 ```
 
 ```{r}
-AUC_rf_qtl <- AutoScore_parsimony2qtl(ranking_rf, c(0, 0.05, 0.2, 0.8, 0.95, 1))
+specificity <- function(x) {
+  x[1, 1] / sum(x[1, ])
+}
 ```
 
 ```{r}
-AUC_rf_kms <- AutoScore_parsimony2kms(ranking_rf, 2)
+sensitivity <- function(x) {
+  x[2, 2] / sum(x[2, ])
+}
 ```
+
+```{r}
+accuracy <- function(x) {
+  diag(x) / sum(x)
+}
+```
+
+```{r}
+j_index <- function(x) {
+  specificity(x) + sensitivity(x) - 1
+}
+```
+
+## Exploration of the effect of the continuous variables
+
+```{r}
+plot_smooth("OralTemperature", 120, nepal3)
+plot_smooth("Pulse", 100, nepal3)
+plot_smooth("OralTemperature", 120, train_data)
+plot_smooth("Pulse", 100, train_data)
+```
+
+## Training a model
+
+Recoding the continuous variables:
+
+```{r}
+nepal4 <- nepal3 |> 
+  mutate(across(OralTemperature, ~ .x > 38.5),
+         across(Pulse, ~ .x > 125))
+```
+
+Fitting a logistic model:
+
+```{r}
+model <- glm(BloodCSResult ~ ., binomial, nepal4)
+```
+
+Generating a clinical score from the model's coefficients:
+
+```{r}
+Xs <- nepal4[, -1]
+cscore <- coef(model)[-1]
+cscore <- as.numeric(cut(cscore, seq(floor(min(cscore)), ceiling(max(cscore)), .5))) |>
+  setNames(names(Xs))
+```
+
+Computing the points from the clinical score:
+
+```{r}
+nepal5 <- tibble(observations = nepal4$BloodCSResult,
+                 points       = colSums(t(as.matrix(Xs)) * pts))
+```
+
+```{r}
+eps <- 1
+the_points <- nepal5$points
+the_thresholds <- (min(the_points) + eps):(max(the_points) - eps)
+conf_mats <- map(the_thresholds, confusion_matrix)
+```
+
+```{r}
+specificities <- map_dbl(conf_mats, specificity)
+sensitivities <- map_dbl(conf_mats, sensitivity)
+
+plot(1 - specificities, sensitivities, type = "l")
+abline(0, 1)
+
+(AUC <- .5 + sum(sensitivities + specificities - 1) / length(the_thresholds))
+```
+
+## Putting the code together for easy training
+
+The function that computes the clinical scores (5 hyper-parameters):
+
+```{r}
+make_clinical_scores <- function(x, temp, pulse, lambda, alpha, by) {
+# 1. recoding the continuous variables:
+  x <- x |> 
+    mutate(across(OralTemperature, ~ .x > temp),                # temp
+           across(Pulse, ~ .x > pulse))                         # pulse
+  Xs <- x[, -1]
+# 2. fitting a logistic model:
+#  model <- glm(BloodCSResult ~ ., binomial, x)       ### HERE WE WANT AUTO-TUNED LASSO
+  model <- glm(BloodCSResult ~ ., binomial, x)                  # lambda, alpha
+# 3. generating the clinical scores:
+  cscore <- coef(model)[-1]
+  cscore |>
+    cut(seq(floor(min(cscore)), ceiling(max(cscore)), by)) |>   # by
+    as.numeric() |> 
+    setNames(names(Xs))
+}
+```
+
+Let's try it:
+
+```{r}
+make_clinical_scores(train_data, 38.5, 125, .5)
+```
+
+
+
+```{r}
+make_points <- function(x, temp, pulse, by) {
+# 1. recoding the continuous variables:
+  x <- x |> 
+    mutate(across(OralTemperature, ~ .x > temp),
+           across(Pulse, ~ .x > pulse))
+  Xs <- x[, -1]
+# 2. fitting a logistic model:
+  model <- glm(BloodCSResult ~ ., binomial, x)
+# 3. generating the clinical scores:
+  cscore <- coef(model)[-1]
+  cscore <- cscore |>
+    cut(seq(floor(min(cscore)), ceiling(max(cscore)), by)) |> 
+    as.numeric()
+# 4. computing the point from the clinical scores:
+  tibble(observations = x$BloodCSResult,
+         points       = colSums(t(as.matrix(Xs)) * cscore))
+}
+```
+
+Here we go:
+
+```{r}
+the_points <- make_points(nepal3, 38.5, 125, .5)
+```
+
+```{r}
+make_confusion_matrices <- function(x, eps = 1) {
+  the_points <- x$points
+  the_thresholds <- (min(the_points) + eps):(max(the_points) - eps)
+  list(conf_matrs = map(the_thresholds, confusion_matrix),
+       thresholds = the_thresholds)
+}
+```
+
+Let's try it:
+
+```{r}
+the_conf_mat <- make_confusion_matrices(the_points)
+```
+
+Let's see what it looks like:
+
+```{r}
+j_indexes <- the_conf_mat |> 
+  with(tibble(threshold = thresholds,
+              j_index   = map_dbl(conf_matrs, j_index)))
+```
+
+```{r}
+best_threshold <- j_indexes |> 
+  arrange(j_index) |> 
+  pull(threshold) |> 
+  tail(1)
+
+best_threshold
+```
+
+Plot:
+
+```{r}
+with(j_indexes, plot(threshold, j_index, col = 4, pch = 19, type = "o", lwd = 2,
+                     xlab = "threshold value", ylab = "j index"))
+abline(v = best_threshold, col = 2, lwd = 2)
+```
+
+Let's put the whole thing together:
+
+```{r}
+
+```
+
+

@@ -1,0 +1,227 @@
+---
+title: "Random forest classification"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r include = FALSE}
+knitr::opts_chunk$set(fig.retina = 2,
+                      fig.align  = "center")
+```
+
+
+## Parameters
+
+The path to the data folder:
+
+```{r}
+data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/typhoid/")
+```
+
+
+## Reading the clean data
+
+The path to the data:
+
+```{r}
+nepal <- readRDS(paste0(data_path, "clean_data/nepal.rds"))
+```
+
+
+## Packages
+
+The required packages:
+
+```{r}
+required_packages <- c("dplyr", "rsample", "parsnip", "recipes", "workflows", "tune",
+                       "tidyr", "ggplot2", "dials", "vip")
+```
+
+Making sure that the required packages are installed:
+
+```{r}
+to_inst <- required_packages[! required_packages %in% installed.packages()[,"Package"]]
+if (length(to_inst)) install.packages(to_inst)
+rm(required_packages, to_inst)
+```
+
+Loading some of these packages:
+
+```{r message = FALSE}
+library(dplyr)
+library(rsample)
+library(parsnip)
+library(recipes)
+library(workflows)
+library(tune)
+library(tidyr)
+library(ggplot2)
+library(dials)
+library(vip)
+```
+
+
+## Feature engineering
+
+Nepal data set:
+
+```{r}
+nepal2 <- nepal |> 
+  mutate(across(c(Cough, Diarrhoea, vomiting, Abdopain, Constipation, Headache,
+                  Anorexia, Nausea, Typhoid_IgM), ~ .x > 0),
+         across(BloodCSResult, as.factor)) |> 
+  select(BloodCSResult, Sex, Age, contains("core"), where(is.logical), everything()) |> 
+  na.exclude()
+```
+
+
+## Spliting the data
+
+Let's create the train and test data sets:
+
+```{r}
+data_split <- initial_split(nepal2)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+
+
+## Building a random forest model
+
+Defining the random forest classifier:
+
+```{r}
+model2tune <- rand_forest(mtry = tune(), trees = tune(), min_n = tune()) |> 
+  set_engine("randomForest") |> 
+  set_mode("classification")
+```
+
+The formula of the classifier:
+
+```{r}
+recette <- recipe(BloodCSResult ~ ., data = train_data)
+```
+
+Let's put the logistic regression and the formula together:
+
+```{r}
+wflow <- workflow() |> 
+  add_recipe(recette) |> 
+  add_model(model2tune)
+```
+
+
+## Tuning hyper-parameters
+
+10-fold cross-validation:
+
+```{r}
+set.seed(234)
+trees_folds <- vfold_cv(train_data)
+```
+
+Exploring a grid of hyper-parameters values:
+
+```{r eval = FALSE}
+tune_res <- tune_grid(wflow, resamples = trees_folds, grid = 20)
+```
+
+```{r include = FALSE}
+if (file.exists("tune_res.rds")) {
+  tune_res <- readRDS("tune_res.rds")
+} else {
+  tune_res <- tune_grid(wflow, resamples = trees_folds, grid = 20)
+  saveRDS(tune_res, "tune_res.rds")
+}
+```
+
+Looking at the performance metrics:
+
+```{r}
+tune_res |> 
+  collect_metrics() |> 
+  filter(.metric == "roc_auc") |> 
+  select(mtry, trees, min_n,  mean, std_err)
+```
+
+Plotting the means of the ROC AUC:
+
+```{r}
+tune_res |> 
+  collect_metrics() |> 
+  filter(.metric == "roc_auc") |> 
+  select(mtry, trees, min_n, mean) |> 
+  pivot_longer(mtry:min_n, values_to = "value", names_to = "parameter") |> 
+  ggplot(aes(value, mean, color = parameter)) +
+    geom_point(show.legend = FALSE) +
+    facet_wrap(~ parameter, scales = "free_x") +
+    labs(x = NULL, y = "AUC")
+```
+
+```{r}
+rf_grid <- grid_regular(mtry(range = c(15, 26)),
+                        min_n(range = c(2, 12)),
+                        levels = 5)
+```
+
+Let's put the logistic regression and the formula together:
+
+```{r}
+model2tune2 <- set_args(model2tune, trees = 1000)
+wflow2 <- update_model(wflow, model2tune2)
+```
+
+```{r eval = FALSE}
+set.seed(456)
+regular_res <- tune_grid(wflow2, resamples = trees_folds, grid = rf_grid)
+```
+
+```{r include = FALSE}
+if (file.exists("regular_res.rds")) {
+  regular_res <- readRDS("regular_res.rds")
+} else {
+  regular_res <- tune_grid(wflow, resamples = trees_folds, grid = 20)
+  saveRDS(regular_res, "regular_res.rds")
+}
+```
+
+```{r}
+regular_res |> 
+  collect_metrics() |> 
+  filter(.metric == "roc_auc") |> 
+  mutate(min_n = factor(min_n)) |> 
+  ggplot(aes(mtry, mean, color = min_n)) +
+    geom_line(alpha = 0.5, linewidth = 1.5) +
+    geom_point() +
+    labs(y = "AUC")
+```
+
+
+## Choosing the best model
+
+```{r}
+best_auc <- select_best(regular_res, metric = "roc_auc")
+final_rf <- finalize_model(model2tune2, best_auc)
+```
+
+```{r}
+wflow2 <- wflow |>
+  update_model(set_args(final_rf, importance = TRUE))
+```
+
+```{r}
+wflow2 |> 
+  fit(data = train_data) |> 
+  vip(20)
+```
+
+```{r}
+wflow2 |> 
+  last_fit(data_split) |> 
+  collect_metrics()
+```
+

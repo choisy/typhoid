@@ -11,12 +11,22 @@ knitr::opts_chunk$set(fig.retina = 2,
                       fig.align  = "center")
 ```
 
+## Parameters
+
+The path to the data folder:
+
+```{r}
+data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/typhoid/")
+```
+
 ## Reading the clean data
 
 The path to the data:
 
 ```{r}
-nepal <- readRDS("nepal.rds")
+nepal <- readRDS(paste0(data_path, "clean_data/nepal.rds"))
 ```
 
 ## Packages
@@ -28,7 +38,7 @@ required_packages <- c("dplyr", "purrr", "rsample", "parsnip", "probably", "magr
                        "yardstick", "tidyr")
 ```
 
-Making sure that needed packages are installed:
+Making sure that the required packages are installed:
 
 ```{r}
 to_inst <- required_packages[! required_packages %in% installed.packages()[,"Package"]]
@@ -107,13 +117,22 @@ wflow <- workflow() |>
 
 ### Making and training a classifier
 
-So far with have a logistic regression model. It can be used as such as a classifier, in which case it will by default assign `TRUE` to a probability above 0.5 and `FALSE` otherwise. But maybe this 0.5 probability threshold is not the optimal value for the classification task. This threshold can be considered as a hyper-parameter to be tuned. Here is the task is quite easy since there is only one hyper-parameter and that this hyper-parameter is constrained to be between 0 and 1. We can thus do an exhaustive search. To do so we will do a 10-fold cross validation scheme to make sure that the value of the hyper-parameter is assessed on unseen data.
+So far with have a logistic regression model. It can be used as such as a classifier,
+in which case it will by default assign `TRUE` to a probability above 0.5 and `FALSE`
+otherwise. But maybe this 0.5 probability threshold is not the optimal value for the
+classification task. This threshold can be considered as a hyper-parameter to be tuned.
+Here is the task is quite easy since there is only one hyper-parameter and that this
+hyper-parameter is constrained to be between 0 and 1. We can thus do an exhaustive
+search. To do so we will do a 10-fold cross validation scheme to make sure that the
+value of the hyper-parameter is assessed on unseen data.
 
 ```{r}
 folds <- vfold_cv(train_data)
 ```
 
-The following function fit the logistic regression on the training set of a given `fold` and then compute the performance metrics for threshold values varying between `epsilon` and `1 - epsilon` by step of `epsilon` on the evaluation set of the `fold`.
+The following function fit the logistic regression on the training set of a given
+`fold` and then compute the performance metrics for threshold values varying between
+`epsilon` and `1 - epsilon` by step of `epsilon` on the evaluation set of the `fold`.
 
 ```{r}
 compute_metrics2 <- function(fold, epsilon = .01) {
