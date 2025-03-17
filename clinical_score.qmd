@@ -41,6 +41,7 @@ Loading some of these packages:
 
 ```{r message = FALSE}
 library(dplyr)
+library(purrr)
 library(rsample)
 ```
 
@@ -66,6 +67,13 @@ nepal2 <- nepal |>
 ```{r}
 nepal3 <- select(nepal2, BloodCSResult, Cough:Hepatomegaly)
 ```
+
+```{r}
+nepal3 |> 
+  select(where(is.logical)) |> 
+  map(table)
+```
+
 
 ## Spliting the data
 
@@ -194,15 +202,26 @@ abline(0, 1)
 The function that computes the clinical scores (5 hyper-parameters):
 
 ```{r}
-make_clinical_scores <- function(x, temp, pulse, lambda, alpha, by) {
+x <- train_data
+temp <- 38.5
+pulse <- 125
+mixture <- 1
+penalty <- 1
+by <- 1
+```
+
+
+```{r}
+make_clinical_scores <- function(x, temp, pulse, mixture, penalty, by) {
 # 1. recoding the continuous variables:
   x <- x |> 
     mutate(across(OralTemperature, ~ .x > temp),                # temp
            across(Pulse, ~ .x > pulse))                         # pulse
   Xs <- x[, -1]
+  Y <- x[, 1]
 # 2. fitting a logistic model:
 #  model <- glm(BloodCSResult ~ ., binomial, x)       ### HERE WE WANT AUTO-TUNED LASSO
-  model <- glm(BloodCSResult ~ ., binomial, x)                  # lambda, alpha
+  model <- glmnet(Xs, Y, binomial, alpha = mixture, lambda = penalty)                  # lambda, alpha
 # 3. generating the clinical scores:
   cscore <- coef(model)[-1]
   cscore |>
@@ -212,10 +231,34 @@ make_clinical_scores <- function(x, temp, pulse, lambda, alpha, by) {
 }
 ```
 
+```{r}
+make_clinical_scores <- function(x, temp, pulse, mixture, penalty, by) {
+# 1. recoding the continuous variables:
+  x <- x |> 
+    mutate(across(OralTemperature, ~ .x > temp),                        # temp
+           across(Pulse, ~ .x > pulse))                                 # pulse
+#  Xs <- x[, -1]
+#  Y <- x[, 1]
+  
+  xfactors <- model.matrix(BloodCSResult ~ ., x)[, -1]
+
+# 2. fitting a logistic model:
+  model <- glmnet(x, as.factor(x$BloodCSResult), binomial, alpha = mixture, lambda = penalty)
+  model <- glmnet(Xs, Y, binomial, alpha = mixture, lambda = penalty)   # lambda, alpha
+# 3. generating the clinical scores:
+  cscore <- coef(model)[-1]
+  cscore |>
+    cut(seq(floor(min(cscore)), ceiling(max(cscore)), by)) |>           # by
+    as.numeric() |> 
+    setNames(names(Xs))
+}
+```
+
+
 Let's try it:
 
 ```{r}
-make_clinical_scores(train_data, 38.5, 125, .5)
+make_clinical_scores(train_data, 38.5, 125, .5, 1, 1)
 ```
 
 
