@@ -26,7 +26,7 @@ data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
 The required packages:
 
 ```{r}
-required_packages <- c("dplyr", "rsample")
+required_packages <- c("dplyr", "purrr", "rsample", "glmnet")
 ```
 
 Making sure that the required packages are installed:
@@ -43,6 +43,7 @@ Loading some of these packages:
 library(dplyr)
 library(purrr)
 library(rsample)
+library(glmnet)
 ```
 
 ## Reading the clean data
@@ -197,6 +198,8 @@ abline(0, 1)
 (AUC <- .5 + sum(sensitivities + specificities - 1) / length(the_thresholds))
 ```
 
+
+
 ## Putting the code together for easy training
 
 The function that computes the clinical scores (5 hyper-parameters):
@@ -237,9 +240,6 @@ make_clinical_scores <- function(x, temp, pulse, mixture, penalty, by) {
   x <- x |> 
     mutate(across(OralTemperature, ~ .x > temp),                        # temp
            across(Pulse, ~ .x > pulse))                                 # pulse
-#  Xs <- x[, -1]
-#  Y <- x[, 1]
-  
   xfactors <- model.matrix(BloodCSResult ~ ., x)[, -1]
 
 # 2. fitting a logistic model:
