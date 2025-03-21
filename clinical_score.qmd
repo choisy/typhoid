@@ -11,6 +11,7 @@ knitr::opts_chunk$set(fig.retina = 2,
                       fig.align  = "center")
 ```
 
+
 ## Parameters
 
 The path to the data folder:
@@ -21,12 +22,13 @@ data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
                     "GitHub/choisy/typhoid/")
 ```
 
+
 ## Packages
 
 The required packages:
 
 ```{r}
-required_packages <- c("dplyr", "purrr", "rsample", "glmnet")
+required_packages <- c("dplyr", "purrr", "stringr", "rsample", "glmnet", "glmnetUtils")
 ```
 
 Making sure that the required packages are installed:
@@ -44,7 +46,9 @@ library(dplyr)
 library(purrr)
 library(rsample)
 library(glmnet)
+library(glmnetUtils)
 ```
+
 
 ## Reading the clean data
 
@@ -53,6 +57,7 @@ The path to the data:
 ```{r}
 nepal <- readRDS(paste0(data_path, "clean_data/nepal.rds"))
 ```
+
 
 ## Feature engineering
 
@@ -85,6 +90,7 @@ data_split <- initial_split(nepal3)
 train_data <- training(data_split)
 test_data <- testing(data_split)
 ```
+
 
 ## Some utilitary functions
 
@@ -140,6 +146,32 @@ j_index <- function(x) {
 }
 ```
 
+A function that converts a named vector of coefficient values into a named vector of
+points corresponding to a clinical score:
+
+```{r}
+coef2scores <- function(x, n) {
+  xmin <- min(x)
+  xmax <- max(x)
+  stepv <- min(diff(seq(xmin, xmax, le = n)))
+  ubrks <- seq(xmin - stepv, xmax + stepv, le = n)
+  cbrks <- ubrks - ubrks[which.min(abs(ubrks))]
+  setNames(sort(c(-(1:sum(cbrks < 0)), 1:sum(cbrks > 0)))[as.integer(cut(x, cbrks))],
+           stringr::str_remove(names(x), "TRUE"))
+}
+```
+
+A function that computes the points from a data frame `df` of binary valued variable
+and a vector `cscore` of clinical scores. The names of the data frame and the the
+vector should be the same, although not necessarily in the same order.
+
+```{r}
+make_points <- function(df, cscore) {
+  colSums(t(as.matrix(df)) * cscore[names(df)])
+}
+```
+
+
 ## Exploration of the effect of the continuous variables
 
 ```{r}
@@ -148,6 +180,7 @@ plot_smooth("Pulse", 100, nepal3)
 plot_smooth("OralTemperature", 120, train_data)
 plot_smooth("Pulse", 100, train_data)
 ```
+
 
 ## Training a model
 
@@ -200,139 +233,99 @@ abline(0, 1)
 
 
 
+
 ## Putting the code together for easy training
 
 The function that computes the clinical scores (5 hyper-parameters):
 
 ```{r}
-x <- train_data
-temp <- 38.5
-pulse <- 125
-mixture <- 1
-penalty <- 1
-by <- 1
+recoding <- function(x, temp, pulse) {
+  mutate(x, across(OralTemperature, ~ .x > temp),                    # temp
+            across(Pulse, ~ .x > pulse))                             # pulse
+}
 ```
 
-
 ```{r}
-make_clinical_scores <- function(x, temp, pulse, mixture, penalty, by) {
-# 1. recoding the continuous variables:
-  x <- x |> 
-    mutate(across(OralTemperature, ~ .x > temp),                # temp
-           across(Pulse, ~ .x > pulse))                         # pulse
-  Xs <- x[, -1]
-  Y <- x[, 1]
+make_clinical_scores0 <- function(x, temp, pulse, n, penalty, mixture = 0) {
+# 1. recoding the 2 continuous variables:
+  x <- mutate(x, across(OralTemperature, ~ .x > temp),               # temp
+                 across(Pulse, ~ .x > pulse))                        # pulse
 # 2. fitting a logistic model:
-#  model <- glm(BloodCSResult ~ ., binomial, x)       ### HERE WE WANT AUTO-TUNED LASSO
-  model <- glmnet(Xs, Y, binomial, alpha = mixture, lambda = penalty)                  # lambda, alpha
+  model <- glmnet(model.matrix(BloodCSResult ~ ., x)[, -1], as.factor(x$BloodCSResult),
+                  binomial, alpha = mixture, lambda = penalty)       # penalty, mixture
 # 3. generating the clinical scores:
-  cscore <- coef(model)[-1]
-  cscore |>
-    cut(seq(floor(min(cscore)), ceiling(max(cscore)), by)) |>   # by
-    as.numeric() |> 
-    setNames(names(Xs))
+  coef2scores(coef(model)[-1, ], n)                                  # n
 }
 ```
 
 ```{r}
-make_clinical_scores <- function(x, temp, pulse, mixture, penalty, by) {
-# 1. recoding the continuous variables:
-  x <- x |> 
-    mutate(across(OralTemperature, ~ .x > temp),                        # temp
-           across(Pulse, ~ .x > pulse))                                 # pulse
-  xfactors <- model.matrix(BloodCSResult ~ ., x)[, -1]
-
-# 2. fitting a logistic model:
-  model <- glmnet(x, as.factor(x$BloodCSResult), binomial, alpha = mixture, lambda = penalty)
-  model <- glmnet(Xs, Y, binomial, alpha = mixture, lambda = penalty)   # lambda, alpha
-# 3. generating the clinical scores:
-  cscore <- coef(model)[-1]
-  cscore |>
-    cut(seq(floor(min(cscore)), ceiling(max(cscore)), by)) |>           # by
-    as.numeric() |> 
-    setNames(names(Xs))
+make_clinical_scores <- function(x, n, penalty, mixture = 0) {
+  model <- glmnet(model.matrix(BloodCSResult ~ ., x)[, -1], as.factor(x$BloodCSResult),
+                  binomial, alpha = mixture, lambda = penalty)       # penalty, mixture
+  coef2scores(coef(model)[-1, ], n)                                  # n
 }
 ```
 
-
-Let's try it:
-
 ```{r}
-make_clinical_scores(train_data, 38.5, 125, .5, 1, 1)
+train_data_recoded <- recoding(train_data, 38.5, 125)
+cscore <- make_clinical_scores(train_data_recoded, 10, 1)
+tibble(observations  = train_data$BloodCSResult,
+       points        = make_points(train_data_recoded[, -1], cscore)) |> 
+  mutate(predictions = points > 7) |> 
+  select(-points) |> 
+  table() |> 
+  j_index()
 ```
 
-
-
 ```{r}
-make_points <- function(x, temp, pulse, by) {
-# 1. recoding the continuous variables:
-  x <- x |> 
-    mutate(across(OralTemperature, ~ .x > temp),
-           across(Pulse, ~ .x > pulse))
-  Xs <- x[, -1]
-# 2. fitting a logistic model:
-  model <- glm(BloodCSResult ~ ., binomial, x)
-# 3. generating the clinical scores:
-  cscore <- coef(model)[-1]
-  cscore <- cscore |>
-    cut(seq(floor(min(cscore)), ceiling(max(cscore)), by)) |> 
-    as.numeric()
-# 4. computing the point from the clinical scores:
-  tibble(observations = x$BloodCSResult,
-         points       = colSums(t(as.matrix(Xs)) * cscore))
+xvj <- function(train, validate, threshold, temp, pulse, n, penalty, mixture = 0) {
+  train_recoded <- recoding(train, temp, pulse)                      # temp, pulse
+  validate_recoded <- recoding(validate, temp, pulse)                # temp, pulse
+  cscore <- make_clinical_scores(train_recoded, n, penalty, mixture) # n, penal, mixt
+  tibble(observations  = validate$BloodCSResult,
+         points        = make_points(validate_recoded[, -1], cscore)) |> 
+    mutate(predictions = points > threshold) |>                      # threshold
+    select(-points) |> 
+    table() |> 
+    j_index()
 }
 ```
 
-Here we go:
-
 ```{r}
-the_points <- make_points(nepal3, 38.5, 125, .5)
-```
-
-```{r}
-make_confusion_matrices <- function(x, eps = 1) {
-  the_points <- x$points
-  the_thresholds <- (min(the_points) + eps):(max(the_points) - eps)
-  list(conf_matrs = map(the_thresholds, confusion_matrix),
-       thresholds = the_thresholds)
+cv_wrapper <- function(x, threshold, temp, pulse, n, penalty, mixture = 0, o = -9999) {
+  map_dbl(x, ~ possibly(xvj, o)(train_data[.x, ], train_data[-.x, ],
+                                    threshold, temp, pulse, n, penalty, mixture))
 }
 ```
 
-Let's try it:
-
 ```{r}
-the_conf_mat <- make_confusion_matrices(the_points)
+trainings <- map(vfold_cv(train_data)$splits, ~ .x$in_id)
+cv_wrapper(trainings, threshold = 7, temp = 38.5, pulse = 125, n = 10, penalty = 1)
 ```
 
-Let's see what it looks like:
+About 20'
 
 ```{r}
-j_indexes <- the_conf_mat |> 
-  with(tibble(threshold = thresholds,
-              j_index   = map_dbl(conf_matrs, j_index)))
+the_grid2 <- expand.grid(threshold = seq(5, 30, 1), temp = seq(36, 40, .5),
+                        pulse = seq(75, 150, 5), n = seq(5, 15, 5),
+                        penalty = exp(seq(-4, 6)))
+
+system.time(
+jvals2 <- pmap(the_grid2, function(threshold, temp, pulse, n, penalty)
+                          cv_wrapper(trainings, threshold, temp, pulse, n, penalty))
+)
 ```
+
+About 5:22':
 
 ```{r}
-best_threshold <- j_indexes |> 
-  arrange(j_index) |> 
-  pull(threshold) |> 
-  tail(1)
-
-best_threshold
+library(parallel)
+system.time(
+  jvals2 <- do.call(mcmapply,
+          c(FUN = function(threshold, temp, pulse, n, penalty)
+                    cv_wrapper(trainings, threshold, temp, pulse, n, penalty),
+            as.list(mtcars),
+            mc.cores = 11))
+)
 ```
-
-Plot:
-
-```{r}
-with(j_indexes, plot(threshold, j_index, col = 4, pch = 19, type = "o", lwd = 2,
-                     xlab = "threshold value", ylab = "j index"))
-abline(v = best_threshold, col = 2, lwd = 2)
-```
-
-Let's put the whole thing together:
-
-```{r}
-
-```
-
 
