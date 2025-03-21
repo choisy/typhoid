@@ -182,58 +182,6 @@ plot_smooth("Pulse", 100, train_data)
 ```
 
 
-## Training a model
-
-Recoding the continuous variables:
-
-```{r}
-nepal4 <- nepal3 |> 
-  mutate(across(OralTemperature, ~ .x > 38.5),
-         across(Pulse, ~ .x > 125))
-```
-
-Fitting a logistic model:
-
-```{r}
-model <- glm(BloodCSResult ~ ., binomial, nepal4)
-```
-
-Generating a clinical score from the model's coefficients:
-
-```{r}
-Xs <- nepal4[, -1]
-cscore <- coef(model)[-1]
-cscore <- as.numeric(cut(cscore, seq(floor(min(cscore)), ceiling(max(cscore)), .5))) |>
-  setNames(names(Xs))
-```
-
-Computing the points from the clinical score:
-
-```{r}
-nepal5 <- tibble(observations = nepal4$BloodCSResult,
-                 points       = colSums(t(as.matrix(Xs)) * pts))
-```
-
-```{r}
-eps <- 1
-the_points <- nepal5$points
-the_thresholds <- (min(the_points) + eps):(max(the_points) - eps)
-conf_mats <- map(the_thresholds, confusion_matrix)
-```
-
-```{r}
-specificities <- map_dbl(conf_mats, specificity)
-sensitivities <- map_dbl(conf_mats, sensitivity)
-
-plot(1 - specificities, sensitivities, type = "l")
-abline(0, 1)
-
-(AUC <- .5 + sum(sensitivities + specificities - 1) / length(the_thresholds))
-```
-
-
-
-
 ## Putting the code together for easy training
 
 The function that computes the clinical scores (5 hyper-parameters):
@@ -246,35 +194,11 @@ recoding <- function(x, temp, pulse) {
 ```
 
 ```{r}
-make_clinical_scores0 <- function(x, temp, pulse, n, penalty, mixture = 0) {
-# 1. recoding the 2 continuous variables:
-  x <- mutate(x, across(OralTemperature, ~ .x > temp),               # temp
-                 across(Pulse, ~ .x > pulse))                        # pulse
-# 2. fitting a logistic model:
-  model <- glmnet(model.matrix(BloodCSResult ~ ., x)[, -1], as.factor(x$BloodCSResult),
-                  binomial, alpha = mixture, lambda = penalty)       # penalty, mixture
-# 3. generating the clinical scores:
-  coef2scores(coef(model)[-1, ], n)                                  # n
-}
-```
-
-```{r}
 make_clinical_scores <- function(x, n, penalty, mixture = 0) {
   model <- glmnet(model.matrix(BloodCSResult ~ ., x)[, -1], as.factor(x$BloodCSResult),
                   binomial, alpha = mixture, lambda = penalty)       # penalty, mixture
   coef2scores(coef(model)[-1, ], n)                                  # n
 }
-```
-
-```{r}
-train_data_recoded <- recoding(train_data, 38.5, 125)
-cscore <- make_clinical_scores(train_data_recoded, 10, 1)
-tibble(observations  = train_data$BloodCSResult,
-       points        = make_points(train_data_recoded[, -1], cscore)) |> 
-  mutate(predictions = points > 7) |> 
-  select(-points) |> 
-  table() |> 
-  j_index()
 ```
 
 ```{r}
@@ -306,12 +230,12 @@ cv_wrapper(trainings, threshold = 7, temp = 38.5, pulse = 125, n = 10, penalty =
 About 20'
 
 ```{r}
-the_grid2 <- expand.grid(threshold = seq(5, 30, 1), temp = seq(36, 40, .5),
-                        pulse = seq(75, 150, 5), n = seq(5, 15, 5),
+the_grid <- expand.grid(threshold = seq(5, 30, 5), temp = seq(36, 40, .5),
+                        pulse = seq(75, 150, 25), n = c(5, 10, 15),
                         penalty = exp(seq(-4, 6)))
-
+                        
 system.time(
-jvals2 <- pmap(the_grid2, function(threshold, temp, pulse, n, penalty)
+jvals <- pmap(the_grid, function(threshold, temp, pulse, n, penalty)
                           cv_wrapper(trainings, threshold, temp, pulse, n, penalty))
 )
 ```
@@ -319,13 +243,12 @@ jvals2 <- pmap(the_grid2, function(threshold, temp, pulse, n, penalty)
 About 5:22':
 
 ```{r}
-library(parallel)
+the_grid2 <- expand.grid(threshold = seq(5, 30, 1), temp = seq(36, 40, .5),
+                         pulse = seq(75, 150, 5), n = seq(5, 15, 5),
+                         penalty = exp(seq(-4, 6)))
+
 system.time(
-  jvals2 <- do.call(mcmapply,
-          c(FUN = function(threshold, temp, pulse, n, penalty)
-                    cv_wrapper(trainings, threshold, temp, pulse, n, penalty),
-            as.list(mtcars),
-            mc.cores = 11))
+jvals2 <- pmap(the_grid2, function(threshold, temp, pulse, n, penalty)
+                            cv_wrapper(trainings, threshold, temp, pulse, n, penalty))
 )
 ```
-
