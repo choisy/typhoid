@@ -182,9 +182,7 @@ plot_smooth("Pulse", 100, train_data)
 ```
 
 
-## Putting the code together for easy training
-
-The function that computes the clinical scores (5 hyper-parameters):
+## The functions
 
 ```{r}
 recoding <- function(x, temp, pulse) {
@@ -252,3 +250,185 @@ jvals2 <- pmap(the_grid2, function(threshold, temp, pulse, n, penalty)
                             cv_wrapper(trainings, threshold, temp, pulse, n, penalty))
 )
 ```
+
+
+## Another strategy
+
+```{r}
+tune_model <- function(formula, data) {
+  model <- cva.glmnet(formula, data, family = binomial)  
+  lambdas <- map(model$modlist, ~ as_tibble(.x[1:2]))
+  alphas <- rep(model$alpha, map_int(lambdas, nrow))
+  the_grid <- bind_rows(lambdas)
+  the_grid$alpha <- alphas
+  the_grid |>
+    filter(cvm == min(cvm)) |> 
+    select(lambda, alpha) |> 
+    unlist()
+}
+```
+
+```{r}
+tuned_coefficients <- function(x, temp, pulse) {
+  x_rec <- recoding(x, temp, pulse)
+  frmla <- BloodCSResult ~ .
+  hyper <- tune_model(frmla, x_rec)
+  model <- glmnet(model.matrix(frmla, x_rec)[, -1], as.factor(x_rec$BloodCSResult),
+                  binomial, alpha = hyper["alpha"], lambda = hyper["lambda"])
+  out <- coef(model)[-1, ]
+  setNames(out, stringr::str_remove(names(out), "TRUE"))
+}
+```
+
+```{r}
+min2 <- function(x) {
+  sum(map_int(x, min, 0))
+}
+```
+
+```{r}
+max2 <- function(x) {
+  sum(map_int(x, max, 0))
+}
+```
+
+```{r}
+a <- tuned_coefficients(train_data, 38.5, 125)
+```
+
+```{r}
+coef2scores(a, n)
+```
+
+Take 20':
+
+```{r}
+grid1 <- expand.grid(temp = seq(35, 42, .5), pulse = seq(60, 130, 10)) |> 
+  as_tibble() |> 
+  mutate(coeffs = map2(temp, pulse, tuned_coefficients, x = train_data))
+```
+
+### lskjh
+
+```{r}
+n_vals <- 3:15
+```
+
+For the first row:
+
+```{r}
+row1 <- grid1[1, ]
+```
+
+Computing the scores:
+
+```{r}
+the_scores <- map(n_vals, coef2scores, x = unlist(row1[["coeffs"]]))
+```
+
+For the first score of the first row:
+
+```{r}
+score1 <- the_scores[[1]]
+```
+
+Looking for the best threshold values:
+
+```{r}
+make_thresholds <- function(x) {
+  seq(min2(x) + 1, max2(x) - 1)
+}
+```
+
+```{r}
+the_thresholds <- make_thresholds(score1)
+```
+
+```{r}
+log2fac <- function(x) {
+  factor(x, levels = c("FALSE", "TRUE"))
+}
+```
+
+```{r}
+compute_j <- function(test, temp, pulse, score, threshold) {
+  tibble(obsv = log2fac(test$BloodCSResult),
+         pred = log2fac(make_points(
+           recoding(test, temp, pulse)[, -1], score) > threshold)) |> 
+    table() |>
+    j_index()
+}
+```
+
+```{r}
+test <- train_data
+temp <- row1$temp
+pulse <- row1$pulse
+score <- score1
+threshold <- thresholds[1]
+```
+
+```{r}
+compute_j(train_data, row1$temp, row1$pulse, score1, thresholds[1])
+```
+
+```{r}
+a <- bootstraps(train_data)
+map(a$splits, ~ .$in_id)
+```
+
+```{r}
+
+map_dbl(, compute_j, row1$temp, row1$pulse, score1, thresholds[1])
+```
+
+
+
+### lsqkdjfh
+
+```{r}
+make_thresholds <- function(x, n) {
+  tmp <- coef2scores(x, n)
+  seq(min2(tmp) + 1, max2(tmp) - 1)
+}
+```
+
+```{r}
+out <- map(n_vals, make_thresholds, x = unlist(grid1[1, "coeffs"]))
+```
+
+
+```{r}
+compute_j <- function(test, temp, pulse, score, threshold) {
+  tibble(obsv = test$BloodCSResult,
+         pred = make_points(recoding(test, temp, pulse)[, -1], score) > threshold) |> 
+    table() |> 
+    j_index()
+}
+```
+
+```{r}
+compute_j(train_data, grid1$temp[1], grid1$pulse[1], the_scores[[1]], )
+```
+
+
+```{r}
+a <- unlist(grid1[[1, "coeffs"]])
+the_scores <- map(n_vals, coef2scores, x = a)
+the_scores[[1]]
+```
+
+
+```{r}
+out <- map(n_vals, make_thresholds, x = unlist(grid1[1, "coeffs"]))
+tibble(n = rep(n_vals, map_int(out, length)), threshold = unlist(out))
+```
+
+
+
+
+
+
+
+
+
