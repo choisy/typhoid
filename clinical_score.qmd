@@ -320,13 +320,13 @@ For the first row:
 row1 <- grid1[1, ]
 ```
 
-Computing the scores:
+Computing the scores of the first row, for various values of `n`:
 
 ```{r}
 the_scores <- map(n_vals, coef2scores, x = unlist(row1[["coeffs"]]))
 ```
 
-For the first score of the first row:
+For the first score (i.e. first value of `n`) of the first row:
 
 ```{r}
 score1 <- the_scores[[1]]
@@ -351,12 +351,21 @@ log2fac <- function(x) {
 ```
 
 ```{r}
+confusion_matrix <- function(test, temp, pulse, score, threshold) {
+  tibble(obsv = log2fac(test$BloodCSResult),
+         pred = log2fac(make_points(
+           recoding(test, temp, pulse)[, -1], score) > threshold)) |> 
+    table()
+}
+```
+
+```{r}
 compute_j <- function(test, temp, pulse, score, threshold) {
   tibble(obsv = log2fac(test$BloodCSResult),
          pred = log2fac(make_points(
            recoding(test, temp, pulse)[, -1], score) > threshold)) |> 
     table() |>
-    j_index()
+    j_index()                                           # could be replaced by accuracy
 }
 ```
 
@@ -369,18 +378,151 @@ threshold <- thresholds[1]
 ```
 
 ```{r}
-compute_j(train_data, row1$temp, row1$pulse, score1, thresholds[1])
+#compute_j(train_data, row1$temp, row1$pulse, score1, thresholds[1])
 ```
 
 ```{r}
-a <- bootstraps(train_data)
-map(a$splits, ~ .$in_id)
+#map_dbl(the_thresholds, compute_j, test = train_data, temp = row1$temp, pulse = row1$pulse, score = score1)
 ```
 
 ```{r}
+j_from_threshold <- function(test, temp, pulse, score, thresholds) {
+  map_dbl(thresholds, compute_j, test = test, temp = temp, pulse = pulse, score = score)
+}
 
-map_dbl(, compute_j, row1$temp, row1$pulse, score1, thresholds[1])
+# j_from_threshold(train_data, row1$temp, row1$pulse, score1, the_thresholds)
 ```
+
+```{r}
+matrix_from_threshold <- function(test, temp, pulse, score, thresholds) {
+  map(thresholds, confusion_matrix, test = test, temp = temp, pulse = pulse, score = score)
+}
+
+matrix_from_threshold(train_data, row1$temp, row1$pulse, score1, the_thresholds)
+```
+
+```{r}
+a <- train_data |> 
+  bootstraps2() |> 
+  map_dfc(j_from_threshold, temp = row1$temp, pulse = row1$pulse, score = score1,
+          thresholds = the_thresholds) |>
+  rowMeans()
+```
+
+```{r}
+extract2 <- function(i, x) x[i]
+```
+
+```{r}
+bootstraps2 <- function(data, ...) {
+  x <- bootstraps(data, ...)
+  map(x$splits, ~ data[.$in_id, ])
+}
+```
+
+This gives you the best threshold for a given value of `n` (that determines `score1`)
+
+```{r}
+train_data |> 
+  bootstraps2() |> 
+  map(matrix_from_threshold, temp = row1$temp, pulse = row1$pulse, score = score1,
+      thresholds = the_thresholds) |> 
+  map(map, j_index) |> 
+  unlist() |> 
+  matrix(length(the_thresholds)) |> 
+  rowMeans() |> 
+  which.max() |> 
+  extract2(the_thresholds)
+```
+
+```{r}
+train_data |> 
+  bootstraps2() |> 
+  map(matrix_from_threshold, temp = row1$temp, pulse = row1$pulse, score = score1,
+      thresholds = the_thresholds) |> 
+  map(map, j_index) |> 
+  unlist() |> 
+  matrix(length(the_thresholds)) |> 
+  rowMeans() |> 
+  setNames(the_thresholds)
+```
+
+```{r}
+find_best_threshold <- function(data, temp, pulse, score, thresholds) {
+  data |> 
+    bootstraps2() |> 
+    map(matrix_from_threshold, temp = temp, pulse = pulse, score = score,
+        thresholds = thresholds) |> 
+    map(map, j_index) |> 
+    unlist() |> 
+    matrix(length(thresholds)) |> 
+    rowMeans() |> 
+    setNames(thresholds)
+}
+
+find_best_threshold(train_data, row1$temp, row1$pulse, score1, the_thresholds)
+```
+
+```{r}
+n_vals <- 3:15
+row1 <- grid1[1, ]
+the_scores <- map(n_vals, coef2scores, x = unlist(row1[["coeffs"]]))
+
+marc <- map(the_scores, ~ find_best_threshold(train_data, row1$temp, row1$pulse,
+                                              .x, make_thresholds(.x)))
+```
+
+```{r}
+aa <- map(marc, ~ .x[which.max(.x)])
+which_n <- which.max(aa)
+n_vals[which_n]
+names(aa[[which_n]])
+```
+
+Meaning that the optimal number of categories to split the coefficients values and the
+optimal threshold are respectively `n_vals[which_n]` and `as.integer(names(aa[[which_n]]))`
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+bootstrapJ <- function(test, temp, pulse, score, threshold, ...) {
+  test |> 
+    bootstraps2(...) |>
+    map_dbl(compute_j, temp, pulse, score, threshold) |>
+    mean()
+}
+
+# bootstrapJ(train_data, row1$temp, row1$pulse, score1, the_thresholds[[1]])
+```
+
+```{r}
+map_dbl(the_thresholds, boot)
+```
+
+
+
 
 
 
