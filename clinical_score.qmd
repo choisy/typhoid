@@ -1,5 +1,5 @@
 ---
-title: "Random forest classification"
+title: "Clinical score"
 format: html
 editor: visual
 editor_options: 
@@ -10,6 +10,18 @@ editor_options:
 knitr::opts_chunk$set(fig.retina = 2,
                       fig.align  = "center")
 ```
+
+
+## Synopsis
+
+* **1 discretizing the continuous variables**: here it's the temperature and the heart
+rate. To start with, let's binarize it (but latter on we could run a random forest
+algorithm in order to the look for the relationship and define an optimal number of
+classes to discretize this variable)
+
+* **2 run an ElasticNet logistic regression**: for a given discretization choice made on
+the continuous variables, run an ElasticNet logistic regression, tuning the penalty and
+mixture hyper-parameters by 10-fold cross-validation of the training data set.
 
 
 ## Parameters
@@ -28,7 +40,8 @@ data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
 The required packages:
 
 ```{r}
-required_packages <- c("dplyr", "purrr", "stringr", "rsample", "glmnet", "glmnetUtils")
+required_packages <- c("dplyr", "purrr", "stringr", "rsample", "glmnet", "glmnetUtils",
+                       "parallel")
 ```
 
 Making sure that the required packages are installed:
@@ -81,18 +94,7 @@ nepal3 |>
 ```
 
 
-## Spliting the data
-
-Let's create the train and test data sets:
-
-```{r}
-data_split <- initial_split(nepal3)
-train_data <- training(data_split)
-test_data <- testing(data_split)
-```
-
-
-## Some utilitary functions
+## General functions
 
 ```{r}
 moving_average <- function(x, w = 20) {
@@ -115,14 +117,6 @@ plot_smooth <- function(x, w, data = nepal3) {
 ```
 
 ```{r}
-confusion_matrix <- function(threshold) {
-  nepal5 |> 
-    mutate(across(points, ~ .x > threshold)) |> 
-    table()
-}
-```
-
-```{r}
 specificity <- function(x) {
   x[1, 1] / sum(x[1, ])
 }
@@ -134,9 +128,11 @@ sensitivity <- function(x) {
 }
 ```
 
+This function is not used yet, maybe in testing:
+
 ```{r}
 accuracy <- function(x) {
-  diag(x) / sum(x)
+  sum(diag(x)) / sum(x)
 }
 ```
 
@@ -157,7 +153,8 @@ coef2scores <- function(x, n) {
   ubrks <- seq(xmin - stepv, xmax + stepv, le = n)
   cbrks <- ubrks - ubrks[which.min(abs(ubrks))]
   setNames(sort(c(-(1:sum(cbrks < 0)), 1:sum(cbrks > 0)))[as.integer(cut(x, cbrks))],
-           stringr::str_remove(names(x), "TRUE"))
+           stringr::str_remove(names(x), "TRUE")) |> 
+    tidyr::replace_na(0)
 }
 ```
 
@@ -171,88 +168,36 @@ make_points <- function(df, cscore) {
 }
 ```
 
-
-## Exploration of the effect of the continuous variables
-
 ```{r}
-plot_smooth("OralTemperature", 120, nepal3)
-plot_smooth("Pulse", 100, nepal3)
-plot_smooth("OralTemperature", 120, train_data)
-plot_smooth("Pulse", 100, train_data)
-```
-
-
-## The functions
-
-```{r}
-recoding <- function(x, temp, pulse) {
-  mutate(x, across(OralTemperature, ~ .x > temp),                    # temp
-            across(Pulse, ~ .x > pulse))                             # pulse
+df2list_rowwise <- function(x) {
+  map(1:nrow(x), ~ slice(x, .x))  
 }
 ```
 
 ```{r}
-make_clinical_scores <- function(x, n, penalty, mixture = 0) {
-  model <- glmnet(model.matrix(BloodCSResult ~ ., x)[, -1], as.factor(x$BloodCSResult),
-                  binomial, alpha = mixture, lambda = penalty)       # penalty, mixture
-  coef2scores(coef(model)[-1, ], n)                                  # n
+make_thresholds <- function(x) {
+  seq(min2(x) + 1, max2(x) - 1)
+}
+```
+
+This function is not used at all:
+
+```{r}
+#extract2 <- function(i, x) x[i]
+```
+
+```{r}
+bootstraps2 <- function(data, ...) {
+  x <- bootstraps(data, ...)
+  map(x$splits, ~ data[.$in_id, ])
 }
 ```
 
 ```{r}
-xvj <- function(train, validate, threshold, temp, pulse, n, penalty, mixture = 0) {
-  train_recoded <- recoding(train, temp, pulse)                      # temp, pulse
-  validate_recoded <- recoding(validate, temp, pulse)                # temp, pulse
-  cscore <- make_clinical_scores(train_recoded, n, penalty, mixture) # n, penal, mixt
-  tibble(observations  = validate$BloodCSResult,
-         points        = make_points(validate_recoded[, -1], cscore)) |> 
-    mutate(predictions = points > threshold) |>                      # threshold
-    select(-points) |> 
-    table() |> 
-    j_index()
+log2fac <- function(x) {
+  factor(x, levels = c("FALSE", "TRUE"))
 }
 ```
-
-```{r}
-cv_wrapper <- function(x, threshold, temp, pulse, n, penalty, mixture = 0, o = -9999) {
-  map_dbl(x, ~ possibly(xvj, o)(train_data[.x, ], train_data[-.x, ],
-                                    threshold, temp, pulse, n, penalty, mixture))
-}
-```
-
-```{r}
-trainings <- map(vfold_cv(train_data)$splits, ~ .x$in_id)
-cv_wrapper(trainings, threshold = 7, temp = 38.5, pulse = 125, n = 10, penalty = 1)
-```
-
-About 20'
-
-```{r}
-the_grid <- expand.grid(threshold = seq(5, 30, 5), temp = seq(36, 40, .5),
-                        pulse = seq(75, 150, 25), n = c(5, 10, 15),
-                        penalty = exp(seq(-4, 6)))
-                        
-system.time(
-jvals <- pmap(the_grid, function(threshold, temp, pulse, n, penalty)
-                          cv_wrapper(trainings, threshold, temp, pulse, n, penalty))
-)
-```
-
-About 5:22':
-
-```{r}
-the_grid2 <- expand.grid(threshold = seq(5, 30, 1), temp = seq(36, 40, .5),
-                         pulse = seq(75, 150, 5), n = seq(5, 15, 5),
-                         penalty = exp(seq(-4, 6)))
-
-system.time(
-jvals2 <- pmap(the_grid2, function(threshold, temp, pulse, n, penalty)
-                            cv_wrapper(trainings, threshold, temp, pulse, n, penalty))
-)
-```
-
-
-## Another strategy
 
 ```{r}
 tune_model <- function(formula, data) {
@@ -269,18 +214,6 @@ tune_model <- function(formula, data) {
 ```
 
 ```{r}
-tuned_coefficients <- function(x, temp, pulse) {
-  x_rec <- recoding(x, temp, pulse)
-  frmla <- BloodCSResult ~ .
-  hyper <- tune_model(frmla, x_rec)
-  model <- glmnet(model.matrix(frmla, x_rec)[, -1], as.factor(x_rec$BloodCSResult),
-                  binomial, alpha = hyper["alpha"], lambda = hyper["lambda"])
-  out <- coef(model)[-1, ]
-  setNames(out, stringr::str_remove(names(out), "TRUE"))
-}
-```
-
-```{r}
 min2 <- function(x) {
   sum(map_int(x, min, 0))
 }
@@ -293,60 +226,58 @@ max2 <- function(x) {
 ```
 
 ```{r}
-a <- tuned_coefficients(train_data, 38.5, 125)
+mclapply2 <- function(...) {
+  parallel::mclapply(..., mc.cores = parallel::detectCores() - 1)
+}
 ```
 
 ```{r}
-coef2scores(a, n)
+bind_cols2 <- function(x, y) {
+  bind_cols(y, x)
+}
 ```
 
-Take 20':
-
 ```{r}
-grid1 <- expand.grid(temp = seq(35, 42, .5), pulse = seq(60, 130, 10)) |> 
-  as_tibble() |> 
-  mutate(coeffs = map2(temp, pulse, tuned_coefficients, x = train_data))
+plot2 <- function(...) plot(..., col = 4)
 ```
 
-### lskjh
+
+## Specific functions
+
+This function is not used at all:
 
 ```{r}
-n_vals <- 3:15
-```
-
-For the first row:
-
-```{r}
-row1 <- grid1[1, ]
-```
-
-Computing the scores of the first row, for various values of `n`:
-
-```{r}
-the_scores <- map(n_vals, coef2scores, x = unlist(row1[["coeffs"]]))
-```
-
-For the first score (i.e. first value of `n`) of the first row:
-
-```{r}
-score1 <- the_scores[[1]]
+#make_clinical_scores <- function(x, n, penalty, mixture = 0) {
+#  model <- glmnet(model.matrix(BloodCSResult ~ ., x)[, -1], as.factor(x$BloodCSResult),
+#                  binomial, alpha = mixture, lambda = penalty)
+#  coef2scores(coef(model)[-1, ], n)
+#}
 ```
 
 Looking for the best threshold values:
 
 ```{r}
-make_thresholds <- function(x) {
-  seq(min2(x) + 1, max2(x) - 1)
+compute_j <- function(test, temp, pulse, score, threshold) {
+  tibble(obsv = log2fac(test$BloodCSResult),
+         pred = log2fac(make_points(
+           recoding(test, temp, pulse)[, -1], score) > threshold)) |> 
+    table() |>
+    j_index()
 }
 ```
 
+This function is not used at all:
+
 ```{r}
-the_thresholds <- make_thresholds(score1)
+#j_from_threshold <- function(test, temp, pulse, score, thresholds) {
+#  map_dbl(thresholds, compute_j, test = test, temp = temp, pulse = pulse, score = score)
+#}
 ```
 
 ```{r}
-log2fac <- function(x) {
-  factor(x, levels = c("FALSE", "TRUE"))
+recoding <- function(x, temp, pulse) {
+  mutate(x, across(OralTemperature, ~ .x > temp),
+            across(Pulse, ~ .x > pulse))
 }
 ```
 
@@ -360,91 +291,9 @@ confusion_matrix <- function(test, temp, pulse, score, threshold) {
 ```
 
 ```{r}
-compute_j <- function(test, temp, pulse, score, threshold) {
-  tibble(obsv = log2fac(test$BloodCSResult),
-         pred = log2fac(make_points(
-           recoding(test, temp, pulse)[, -1], score) > threshold)) |> 
-    table() |>
-    j_index()                                           # could be replaced by accuracy
-}
-```
-
-```{r}
-test <- train_data
-temp <- row1$temp
-pulse <- row1$pulse
-score <- score1
-threshold <- thresholds[1]
-```
-
-```{r}
-#compute_j(train_data, row1$temp, row1$pulse, score1, thresholds[1])
-```
-
-```{r}
-#map_dbl(the_thresholds, compute_j, test = train_data, temp = row1$temp, pulse = row1$pulse, score = score1)
-```
-
-```{r}
-j_from_threshold <- function(test, temp, pulse, score, thresholds) {
-  map_dbl(thresholds, compute_j, test = test, temp = temp, pulse = pulse, score = score)
-}
-
-# j_from_threshold(train_data, row1$temp, row1$pulse, score1, the_thresholds)
-```
-
-```{r}
 matrix_from_threshold <- function(test, temp, pulse, score, thresholds) {
   map(thresholds, confusion_matrix, test = test, temp = temp, pulse = pulse, score = score)
 }
-
-matrix_from_threshold(train_data, row1$temp, row1$pulse, score1, the_thresholds)
-```
-
-```{r}
-a <- train_data |> 
-  bootstraps2() |> 
-  map_dfc(j_from_threshold, temp = row1$temp, pulse = row1$pulse, score = score1,
-          thresholds = the_thresholds) |>
-  rowMeans()
-```
-
-```{r}
-extract2 <- function(i, x) x[i]
-```
-
-```{r}
-bootstraps2 <- function(data, ...) {
-  x <- bootstraps(data, ...)
-  map(x$splits, ~ data[.$in_id, ])
-}
-```
-
-This gives you the best threshold for a given value of `n` (that determines `score1`)
-
-```{r}
-train_data |> 
-  bootstraps2() |> 
-  map(matrix_from_threshold, temp = row1$temp, pulse = row1$pulse, score = score1,
-      thresholds = the_thresholds) |> 
-  map(map, j_index) |> 
-  unlist() |> 
-  matrix(length(the_thresholds)) |> 
-  rowMeans() |> 
-  which.max() |> 
-  extract2(the_thresholds)
-```
-
-```{r}
-train_data |> 
-  bootstraps2() |> 
-  map(matrix_from_threshold, temp = row1$temp, pulse = row1$pulse, score = score1,
-      thresholds = the_thresholds) |> 
-  map(map, j_index) |> 
-  unlist() |> 
-  matrix(length(the_thresholds)) |> 
-  rowMeans() |> 
-  setNames(the_thresholds)
 ```
 
 ```{r}
@@ -459,118 +308,191 @@ find_best_threshold <- function(data, temp, pulse, score, thresholds) {
     rowMeans() |> 
     setNames(thresholds)
 }
-
-find_best_threshold(train_data, row1$temp, row1$pulse, score1, the_thresholds)
 ```
 
 ```{r}
-n_vals <- 3:15
-row1 <- grid1[1, ]
-the_scores <- map(n_vals, coef2scores, x = unlist(row1[["coeffs"]]))
-
-marc <- map(the_scores, ~ find_best_threshold(train_data, row1$temp, row1$pulse,
-                                              .x, make_thresholds(.x)))
-```
-
-```{r}
-aa <- map(marc, ~ .x[which.max(.x)])
-which_n <- which.max(aa)
-n_vals[which_n]
-names(aa[[which_n]])
-```
-
-Meaning that the optimal number of categories to split the coefficients values and the
-optimal threshold are respectively `n_vals[which_n]` and `as.integer(names(aa[[which_n]]))`
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-```{r}
-bootstrapJ <- function(test, temp, pulse, score, threshold, ...) {
-  test |> 
-    bootstraps2(...) |>
-    map_dbl(compute_j, temp, pulse, score, threshold) |>
-    mean()
-}
-
-# bootstrapJ(train_data, row1$temp, row1$pulse, score1, the_thresholds[[1]])
-```
-
-```{r}
-map_dbl(the_thresholds, boot)
-```
-
-
-
-
-
-
-### lsqkdjfh
-
-```{r}
-make_thresholds <- function(x, n) {
-  tmp <- coef2scores(x, n)
-  seq(min2(tmp) + 1, max2(tmp) - 1)
+n_t_j <- function(rowX, n_vals, data) {
+  j_values <- n_vals |>
+    map(coef2scores, x = unlist(rowX[["coeffs"]])) |> 
+    map(~ find_best_threshold(data, rowX$temp, rowX$pulse, .x, make_thresholds(.x))) |> 
+    map(~ .x[which.max(.x)])
+  which_n <- which.max(j_values)
+  tibble(n = n_vals[which_n], t = as.integer(names(j_values[[which_n]])), j = max(unlist(j_values)))
 }
 ```
 
 ```{r}
-out <- map(n_vals, make_thresholds, x = unlist(grid1[1, "coeffs"]))
+tuned_coefficients <- function(x, temp, pulse) {
+  x_rec <- recoding(x, temp, pulse)
+  frmla <- BloodCSResult ~ .
+  hyper <- tune_model(frmla, x_rec)
+  model <- glmnet(model.matrix(frmla, x_rec)[, -1], as.factor(x_rec$BloodCSResult),
+                  binomial, alpha = hyper["alpha"], lambda = hyper["lambda"])
+  out <- coef(model)[-1, ]
+  setNames(out, stringr::str_remove(names(out), "TRUE"))
+}
 ```
 
 
+## Spliting the data
+
+Let's create the train and test data sets:
+
 ```{r}
-compute_j <- function(test, temp, pulse, score, threshold) {
-  tibble(obsv = test$BloodCSResult,
-         pred = make_points(recoding(test, temp, pulse)[, -1], score) > threshold) |> 
-    table() |> 
-    j_index()
+data_split <- initial_split(nepal3)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+
+
+## Exploration of the effect of the continuous variables
+
+```{r}
+plot_smooth("OralTemperature", 120, nepal3)
+plot_smooth("Pulse", 100, nepal3)
+plot_smooth("OralTemperature", 120, train_data)
+plot_smooth("Pulse", 100, train_data)
+```
+
+
+## Model training
+
+Takes 20':
+
+```{r}
+grid1 <- expand.grid(temp = seq(35, 42, .5), pulse = seq(60, 130, 10)) |> 
+  as_tibble() |> 
+  mutate(coeffs = map2(temp, pulse, tuned_coefficients, x = train_data))
+```
+
+A parallelized version (takes ca 7'):
+
+```{r}
+temp_pulse_grid <- expand.grid(temp = seq(35, 42, .5),
+                               pulse = seq(60, 130, 10))
+
+temp_pulse_grid <- temp_pulse_grid |> 
+  as_tibble() |> 
+  mutate(coeffs = mclapply2(1:nrow(temp_pulse_grid), 
+                            function(x) tuned_coefficients(train_data,
+                                                           temp_pulse_grid$temp[x],
+                                                           temp_pulse_grid$pulse[x])))
+```
+
+Takes 54':
+
+```{r}
+out_serial <- grid1 |> 
+  df2list_rowwise() |> 
+  map_dfr(n_t_j, 3:15, train_data) |> 
+  bind_cols2(grid1)
+```
+
+A parallelized version (takes 11'):
+
+```{r}
+out_parallel <- temp_pulse_grid |> 
+  df2list_rowwise() |> 
+  mclapply2(n_t_j, n_vals = 3:15, data = train_data) |> 
+  bind_rows() |> 
+  bind_cols2(temp_pulse_grid)
+```
+
+```{r}
+filter(out_serial, j == max(j))
+filter(out_parallel, j == max(j))
+```
+
+Let's compare the first best models:
+
+```{r}
+arrange(out_serial, desc(j))
+arrange(out_parallel, desc(j))
+```
+
+```{r}
+add_position <- function(x) {
+  x |> 
+    arrange(desc(j)) |> 
+    mutate(order = row_number())
+}
+
+out_all <- bind_rows(mutate(add_position(out_serial), batch = "serial"),
+                     mutate(add_position(out_parallel), batch = "parallel"))
+```
+
+```{r}
+with(out_all, plot(order, j, col = c(serial = 4, parallel = 2)[batch]))
+```
+
+This shows that there is still a bit of variability.
+
+## Model testing
+
+```{r}
+best_model_serial <- filter(out_serial, j == max(j))
+best_model_parallel <- filter(out_parallel, j == max(j))
+```
+
+```{r}
+extract_score <- function(x) {
+  with(x, list(tempt = temp,
+               pulse = pulse,
+               score = coef2scores(first(coeffs), n),
+               thres = x$t))
 }
 ```
 
 ```{r}
-compute_j(train_data, grid1$temp[1], grid1$pulse[1], the_scores[[1]], )
+model_serial <- extract_score(best_model_serial)
+model_parallel <- extract_score(best_model_parallel)
 ```
-
 
 ```{r}
-a <- unlist(grid1[[1, "coeffs"]])
-the_scores <- map(n_vals, coef2scores, x = a)
-the_scores[[1]]
+make_predictions <- function(data, model) {
+  data |> 
+    recoding(model$tempt, model$pulse) |> 
+    select(-BloodCSResult) |> 
+    make_points(model$score) |> 
+    magrittr::is_greater_than(model$thres)
+}
 ```
-
 
 ```{r}
-out <- map(n_vals, make_thresholds, x = unlist(grid1[1, "coeffs"]))
-tibble(n = rep(n_vals, map_int(out, length)), threshold = unlist(out))
+make_predictions(test_data, model_serial)
+make_predictions(test_data, model_parallel)
 ```
 
+```{r}
+confmat_test <- function(data, model) {
+  data |> 
+    mutate(predictions = make_predictions(data, model)) |> 
+    select(BloodCSResult, predictions) |> 
+    mutate_all(log2fac) |> 
+    table()
+}
+```
 
+```{r}
+confmat_serial <- confmat_test(test_data, model_serial)
+confmat_parallel <- confmat_test(test_data, model_parallel)
+```
 
+```{r}
+accuracy(confmat_serial)
+sensitivity(confmat_serial)
+specificity(confmat_serial)
+j_index(confmat_serial)
+```
 
+```{r}
+accuracy(confmat_parallel)
+sensitivity(confmat_parallel)
+specificity(confmat_parallel)
+j_index(confmat_parallel)
+```
 
-
-
-
-
+```{r}
+sensitivity(confmat_serial)
+specificity(confmat_serial)
+```
