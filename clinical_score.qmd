@@ -1,7 +1,7 @@
 ---
 title: "Clinical score"
 format: html
-editor: visual
+editor: source
 editor_options: 
   chunk_output_type: console
 ---
@@ -14,14 +14,9 @@ knitr::opts_chunk$set(fig.retina = 2,
 
 ## Synopsis
 
-* **1 discretizing the continuous variables**: here it's the temperature and the heart
-rate. To start with, let's binarize it (but latter on we could run a random forest
-algorithm in order to the look for the relationship and define an optimal number of
-classes to discretize this variable)
+-   **1 discretizing the continuous variables**: here it's the temperature and the heart rate. To start with, let's binarize it (but latter on we could run a random forest algorithm in order to the look for the relationship and define an optimal number of classes to discretize this variable)
 
-* **2 run an ElasticNet logistic regression**: for a given discretization choice made on
-the continuous variables, run an ElasticNet logistic regression, tuning the penalty and
-mixture hyper-parameters by 10-fold cross-validation of the training data set.
+-   **2 run an ElasticNet logistic regression**: for a given discretization choice made on the continuous variables, run an ElasticNet logistic regression, tuning the penalty and mixture hyper-parameters by 10-fold cross-validation of the training data set.
 
 
 ## Parameters
@@ -41,13 +36,13 @@ The required packages:
 
 ```{r}
 required_packages <- c("dplyr", "purrr", "stringr", "rsample", "glmnet", "glmnetUtils",
-                       "parallel")
+                       "parallel", "magrittr", "tidyr")
 ```
 
 Making sure that the required packages are installed:
 
 ```{r}
-to_inst <- required_packages[! required_packages %in% installed.packages()[,"Package"]]
+to_inst <- required_packages[! required_packages %in% installed.packages()[, "Package"]]
 if (length(to_inst)) install.packages(to_inst)
 rm(required_packages, to_inst)
 ```
@@ -60,41 +55,19 @@ library(purrr)
 library(rsample)
 library(glmnet)
 library(glmnetUtils)
+library(tidyr)
 ```
 
 
-## Reading the clean data
+## Utilitary functions
 
-The path to the data:
-
-```{r}
-nepal <- readRDS(paste0(data_path, "clean_data/nepal.rds"))
+```{r include = FALSE}
+file_exists <- function(x) file.exists(paste0(data_path, "cache/", x))
+readRDS2 <- function(x) readRDS(paste0(data_path, "cache/", x))
+saveRDS2 <- function(object, file) saveRDS(object, paste0(data_path, "cache/", file))
 ```
 
-
-## Feature engineering
-
-Nepal data set:
-
-```{r}
-nepal2 <- nepal |> 
-  mutate(across(c(Cough, Diarrhoea, vomiting, Abdopain, Constipation, Headache,
-                  Anorexia, Nausea, Typhoid_IgM), ~ .x > 0)) |> 
-  na.exclude()
-```
-
-```{r}
-nepal3 <- select(nepal2, BloodCSResult, Cough:Hepatomegaly)
-```
-
-```{r}
-nepal3 |> 
-  select(where(is.logical)) |> 
-  map(table)
-```
-
-
-## General functions
+A function that computes the moving average of a vector `x` with a window `w`:
 
 ```{r}
 moving_average <- function(x, w = 20) {
@@ -107,14 +80,7 @@ moving_average <- function(x, w = 20) {
 }
 ```
 
-```{r}
-plot_smooth <- function(x, w, data = nepal3) {
-  data[order(data[[x]]), ] |> 
-    select({{ x }}, BloodCSResult) |> 
-    map_dfc(moving_average, w) |> 
-    plot(col = 4)
-}
-```
+A function that computes the specificity from a confusion matrix `x`:
 
 ```{r}
 specificity <- function(x) {
@@ -122,13 +88,15 @@ specificity <- function(x) {
 }
 ```
 
+A function that computes the sensitivity from a confusion matrix `x`:
+
 ```{r}
 sensitivity <- function(x) {
   x[2, 2] / sum(x[2, ])
 }
 ```
 
-This function is not used yet, maybe in testing:
+A function that computes the accuracy from a confusion matrix `x`:
 
 ```{r}
 accuracy <- function(x) {
@@ -136,14 +104,17 @@ accuracy <- function(x) {
 }
 ```
 
+A function that computes Youden's J index from a confusion matrix `x`:
+
 ```{r}
 j_index <- function(x) {
   specificity(x) + sensitivity(x) - 1
 }
 ```
 
-A function that converts a named vector of coefficient values into a named vector of
-points corresponding to a clinical score:
+A function that converts a named vector `x` of coefficient values into a named vector
+of points of a clinical score, where `n` is the number of number of bins used over the
+range of `x`:
 
 ```{r}
 coef2scores <- function(x, n) {
@@ -154,13 +125,13 @@ coef2scores <- function(x, n) {
   cbrks <- ubrks - ubrks[which.min(abs(ubrks))]
   setNames(sort(c(-(1:sum(cbrks < 0)), 1:sum(cbrks > 0)))[as.integer(cut(x, cbrks))],
            stringr::str_remove(names(x), "TRUE")) |> 
-    tidyr::replace_na(0)
+    replace_na(0)
 }
 ```
 
-A function that computes the points from a data frame `df` of binary valued variable
-and a vector `cscore` of clinical scores. The names of the data frame and the the
-vector should be the same, although not necessarily in the same order.
+A function that computes the points from a data frame `df` of binary valued variables
+and a vector `cscore` of clinical scores. The names of the data frame and the vector
+should be the same, although not necessarily in the same order:
 
 ```{r}
 make_points <- function(df, cscore) {
@@ -168,23 +139,25 @@ make_points <- function(df, cscore) {
 }
 ```
 
+A function that splits a data frame `x` by rows into a list of 1-row data frames:
+
 ```{r}
 df2list_rowwise <- function(x) {
   map(1:nrow(x), ~ slice(x, .x))  
 }
 ```
 
+A function that generates the values of thresholds on a `x` vector that should be
+tested, where `by` is the step by which these values should be generated:
+
 ```{r}
-make_thresholds <- function(x) {
-  seq(min2(x) + 1, max2(x) - 1)
+make_thresholds <- function(x, by = 1) {
+  seq(min2(x) + by, max2(x) - by, by)
 }
 ```
 
-This function is not used at all:
-
-```{r}
-#extract2 <- function(i, x) x[i]
-```
+A wrapper around `rsample`'s `bootstraps()` function that returns the actual data
+frames instead of the row indexes:
 
 ```{r}
 bootstraps2 <- function(data, ...) {
@@ -193,15 +166,22 @@ bootstraps2 <- function(data, ...) {
 }
 ```
 
+A function that converts a logical vector `x` into a factor, making sure that it's a
+factor of 2 levels, `TRUE` and `FALSE`, even if the `x` contains only one of these
+levels:
+
 ```{r}
 log2fac <- function(x) {
   factor(x, levels = c("FALSE", "TRUE"))
 }
 ```
 
+The following function tunes the penalty $\lambda$ and mixture $\alpha$
+hyper-parameters of a logistic ElasticNet regression and returns the tuned values:
+
 ```{r}
 tune_model <- function(formula, data) {
-  model <- cva.glmnet(formula, data, family = binomial)  
+  model <- glmnetUtils::cva.glmnet(formula, data, family = binomial)  
   lambdas <- map(model$modlist, ~ as_tibble(.x[1:2]))
   alphas <- rep(model$alpha, map_int(lambdas, nrow))
   the_grid <- bind_rows(lambdas)
@@ -213,17 +193,15 @@ tune_model <- function(formula, data) {
 }
 ```
 
-```{r}
-min2 <- function(x) {
-  sum(map_int(x, min, 0))
-}
-```
+For each element of a given vector `x`, the following two functions return the minimum
+(maximum) of this element and 0:
 
 ```{r}
-max2 <- function(x) {
-  sum(map_int(x, max, 0))
-}
+min2 <- function(x) sum(map_int(x, min, 0))
+max2 <- function(x) sum(map_int(x, max, 0))
 ```
+
+A tuned version of `parallel::mclapply()`:
 
 ```{r}
 mclapply2 <- function(...) {
@@ -231,48 +209,164 @@ mclapply2 <- function(...) {
 }
 ```
 
+A version of `bind_cols()` that works on two data frames, switching their order in the
+binding process:
+
 ```{r}
-bind_cols2 <- function(x, y) {
-  bind_cols(y, x)
-}
+bind_cols2 <- function(x, y) bind_cols(y, x)
 ```
+
+A tuned version of the `plot()` function:
 
 ```{r}
 plot2 <- function(...) plot(..., col = 4)
 ```
 
-
-## Specific functions
-
-This function is not used at all:
+A function that adds an `order` variable to a data frame `x` according to a variable
+`v`:
 
 ```{r}
-#make_clinical_scores <- function(x, n, penalty, mixture = 0) {
-#  model <- glmnet(model.matrix(BloodCSResult ~ ., x)[, -1], as.factor(x$BloodCSResult),
-#                  binomial, alpha = mixture, lambda = penalty)
-#  coef2scores(coef(model)[-1, ], n)
-#}
-```
-
-Looking for the best threshold values:
-
-```{r}
-compute_j <- function(test, temp, pulse, score, threshold) {
-  tibble(obsv = log2fac(test$BloodCSResult),
-         pred = log2fac(make_points(
-           recoding(test, temp, pulse)[, -1], score) > threshold)) |> 
-    table() |>
-    j_index()
+add_position0 <- function(x) {
+  x |> 
+    arrange(desc(j)) |> 
+    mutate(order = row_number())
 }
 ```
 
-This function is not used at all:
+```{r}
+add_position <- function(x, v) {
+  x |> 
+    arrange(desc({{ v }})) |> 
+    mutate(order = row_number())
+}
+```
+
+
+## Reading the clean data
+
+The Nepal data set:
 
 ```{r}
-#j_from_threshold <- function(test, temp, pulse, score, thresholds) {
-#  map_dbl(thresholds, compute_j, test = test, temp = temp, pulse = pulse, score = score)
-#}
+nepal_raw <- readRDS(paste0(data_path, "clean_data/nepal.rds"))
 ```
+
+
+## Feature engineering
+
+Recoding durations (in number of days) into presence / absence and remove observations
+with missing values:
+
+```{r}
+nepal_recoded <- nepal_raw |> 
+  mutate(across(c(Cough, Diarrhoea, vomiting, Abdopain, Constipation, Headache,
+                  Anorexia, Nausea, Typhoid_IgM), ~ .x > 0)) |> 
+  na.exclude()
+```
+
+The subset of symptoms variables:
+
+```{r}
+nepal_symptoms <- select(nepal_recoded, BloodCSResult, Cough:Hepatomegaly)
+```
+
+Let's have a look at the binary variables:
+
+```{r}
+make_tables <- function(x) {
+  x |> 
+    pivot_longer(everything(), names_to = "variable", values_to = "value") |> 
+    group_by(variable) |> 
+    group_modify(~ as_tibble(table(.x))) |> 
+    pivot_wider(names_from = value, values_from = n)
+}
+
+nepal_symptoms |> 
+  select(where(is.logical)) |> 
+  make_tables() |> 
+  arrange(`TRUE`)
+```
+
+An alternative way to look at them:
+
+```{r}
+nepal_symptoms |> 
+  select(where(is.logical)) |> 
+  group_by(BloodCSResult) |> 
+  group_modify(~ make_tables(.x)) |> 
+  select(variable, everything()) |> 
+  arrange(variable, BloodCSResult)
+```
+
+A function that makes mirrored histograms to compare histograms of a continuous
+variable in case of blood culture positive (red) and negative (blue):
+
+```{r}
+mirror_hist <- function(x, xlab, ymax, epsilon = .18) {
+  variable <- pull(nepal_symptoms, {{ x }})
+  
+  hist2 <- function(...) {
+    hist(...,
+         freq = FALSE,
+         breaks = (min(variable) - .5):(max(variable) + .5),
+         ylab = "density",
+         main = NA)
+  }
+  
+  opar <- par(mfrow = 2:1)
+  plt <- par("plt")
+  plt[3:4] <- c(0, 1 - epsilon)
+  par(plt = plt)
+  nepal_symptoms |> 
+    filter(BloodCSResult) |> 
+    pull({{ x }}) |> 
+    hist2(ylim = c(0, ymax), xlab = NA, axes = FALSE, col = 2)
+  axis(2); axis(3)
+  mtext(xlab, line = 1.5)
+  
+  plt[3:4] <- c(epsilon, 1)
+  par(plt = plt)
+  nepal_symptoms |> 
+    filter(! BloodCSResult) |> 
+    pull({{ x }}) |> 
+    hist2(ylim = c(ymax, 0), xlab = xlab, col = 4)
+  par(opar)
+}
+```
+
+Let's now look at the continuous variables:
+
+```{r}
+mirror_hist(Pulse, "pulse", .15)
+mirror_hist(OralTemperature, "temperature", .45)
+```
+
+Another way to look at the effect of a continuous on the blood test result, with this
+function that plots a moving average of the probability of positive result of a
+variable `x` of the the data frame `data` as a function of a moving average of the
+`BloodCSResult` variable of this same data frame, with `w` the window parameter of
+these moving averages:
+
+```{r}
+plot_smooth <- function(x, w, data) {
+  data[order(data[[x]]), ] |> 
+    select({{ x }}, BloodCSResult) |> 
+    map_dfc(moving_average, w) |> 
+    plot2()
+}
+```
+
+Let's have a look at the effect of pulse and temperature:
+
+```{r}
+plot_smooth("OralTemperature", 120, nepal_symptoms)
+plot_smooth("Pulse", 100, nepal_symptoms)
+```
+
+
+## Specific functions
+
+This function recodes the `OralTemperature` and `Pulse` variable of the data set `x`
+according to the thresholds `temp` and `pulse` respectively:
 
 ```{r}
 recoding <- function(x, temp, pulse) {
@@ -281,25 +375,42 @@ recoding <- function(x, temp, pulse) {
 }
 ```
 
+This function (i) recodes the `OralTemperature` and `Pulse` variables of the data set
+`x` according to the thresholds `temp` and `pulse` respectively, (ii) transforms the
+explanatory variables (all of them binary now) into a variable of points according to
+the `score` (iii) converts these points into a prediction according to `threshold` that
+(iv) is used together with the corresponding observed values to produce a confusion
+matrix:
+
 ```{r}
-confusion_matrix <- function(test, temp, pulse, score, threshold) {
-  tibble(obsv = log2fac(test$BloodCSResult),
+confusion_matrix <- function(data, temp, pulse, score, threshold) {
+  tibble(obsv = log2fac(data$BloodCSResult),
          pred = log2fac(make_points(
-           recoding(test, temp, pulse)[, -1], score) > threshold)) |> 
+           recoding(data, temp, pulse)[, -1], score) > threshold)) |> 
     table()
 }
 ```
 
+This function converts a vector of `thresholds` values into a list of confusion
+matrices generated by the function `confusion_matrix` on the data set `data, with
+parameters `temp` and `pulse` and the score `score`:
+
 ```{r}
-matrix_from_threshold <- function(test, temp, pulse, score, thresholds) {
-  map(thresholds, confusion_matrix, test = test, temp = temp, pulse = pulse, score = score)
+matrix_from_threshold <- function(data, temp, pulse, score, thresholds) {
+  map(thresholds, confusion_matrix,
+      data = data, temp = temp, pulse = pulse, score = score)
 }
 ```
 
+For each value of the vector `thresholds` of decision-making threshold values, this
+function computes the average Youden J index averaged across bootstrapped versions of
+the data set `data`, where model predictions are made based on the `temp` and `pulse`
+threshold for data recoding and the clinical score `score`:
+
 ```{r}
-find_best_threshold <- function(data, temp, pulse, score, thresholds) {
+find_best_threshold <- function(data, temp, pulse, score, thresholds, ...) {
   data |> 
-    bootstraps2() |> 
+    bootstraps2(...) |> 
     map(matrix_from_threshold, temp = temp, pulse = pulse, score = score,
         thresholds = thresholds) |> 
     map(map, j_index) |> 
@@ -310,16 +421,32 @@ find_best_threshold <- function(data, temp, pulse, score, thresholds) {
 }
 ```
 
+For a given row `rowX` of a data frame that contains values of `temp` and `pulse` as
+well corresponding tuned coefficients of the logistic ElasticNet model, this function
+returns the tuned `n` and `t` hyper-parameters as well as the corresponding value of
+the Youden J index. `n_vals` is the vector of values of the `n` parameter of the
+function `coef2scores()` to try, `by` is the parameter passed to the
+`make_thresholds()` function to generate the decision-making thresholds values to try,
+and `data` is the data frame used to do the computation:
+
 ```{r}
-n_t_j <- function(rowX, n_vals, data) {
+n_t_j <- function(rowX, n_vals, data, by = 1) {
   j_values <- n_vals |>
     map(coef2scores, x = unlist(rowX[["coeffs"]])) |> 
-    map(~ find_best_threshold(data, rowX$temp, rowX$pulse, .x, make_thresholds(.x))) |> 
+    map(~ find_best_threshold(data, rowX$temp, rowX$pulse, .x,
+                              make_thresholds(.x, by))) |> 
     map(~ .x[which.max(.x)])
   which_n <- which.max(j_values)
-  tibble(n = n_vals[which_n], t = as.integer(names(j_values[[which_n]])), j = max(unlist(j_values)))
+  tibble(n = n_vals[which_n],
+         t = as.integer(names(j_values[[which_n]])),
+         j = max(unlist(j_values)))
 }
 ```
+
+This function returns the coefficient of a tuned ElasticNet logistic regression
+explaining the `BloodCSResult` variable of the data frame `x` where the
+`OralTemperature` and `Pulse` variable are recoding using the `temp` and `pulse`
+threshold values:
 
 ```{r}
 tuned_coefficients <- function(x, temp, pulse) {
@@ -339,64 +466,100 @@ tuned_coefficients <- function(x, temp, pulse) {
 Let's create the train and test data sets:
 
 ```{r}
-data_split <- initial_split(nepal3)
+data_split <- initial_split(nepal_symptoms)
 train_data <- training(data_split)
 test_data <- testing(data_split)
 ```
 
 
-## Exploration of the effect of the continuous variables
-
-```{r}
-plot_smooth("OralTemperature", 120, nepal3)
-plot_smooth("Pulse", 100, nepal3)
-plot_smooth("OralTemperature", 120, train_data)
-plot_smooth("Pulse", 100, train_data)
-```
-
-
 ## Model training
 
-Takes 20':
+### In series
+
+The pipeline of the inner loop (i.e. tuning hyper-parameters `n` and `t` on data frame
+`data`). The inner loop results are added to the outer loop results `x`. Tried values
+of `n` are provided directly whereas tried values of `t` and generated in the loop (as
+they depends on the values of `n`) and the process is controled by the parameter `by`.
 
 ```{r}
-grid1 <- expand.grid(temp = seq(35, 42, .5), pulse = seq(60, 130, 10)) |> 
-  as_tibble() |> 
-  mutate(coeffs = map2(temp, pulse, tuned_coefficients, x = train_data))
+add_ntJ <- function(x, n, data, by = 1) {
+  x |> 
+    df2list_rowwise() |> 
+    map_dfr(n_t_j, n, data, by) |> 
+    bind_cols2(x)
+}
 ```
 
-A parallelized version (takes ca 7'):
+The full pipeline with the outer loop (hyper-parameters `temp` and `pulse`) and the
+inner loop (hyper-parameters `n` and `t` (whose exploration is controled by `by`)):
 
 ```{r}
-temp_pulse_grid <- expand.grid(temp = seq(35, 42, .5),
-                               pulse = seq(60, 130, 10))
-
-temp_pulse_grid <- temp_pulse_grid |> 
-  as_tibble() |> 
-  mutate(coeffs = mclapply2(1:nrow(temp_pulse_grid), 
-                            function(x) tuned_coefficients(train_data,
-                                                           temp_pulse_grid$temp[x],
-                                                           temp_pulse_grid$pulse[x])))
+serial_pipeline <- function(data, temp, pulse, n, by = 1) {
+  expand.grid(temp = temp, pulse = pulse) |> 
+    as_tibble() |> 
+    mutate(coeffs = map2(temp, pulse, tuned_coefficients, x = data)) |> 
+    add_ntJ(n, data, by)
+}
 ```
 
-Takes 54':
+Takes 74':
+
+```{r eval = FALSE}
+out_serial <- serial_pipeline(train_data, seq(35, 42, .5), seq(60, 130, 10), 3:15, 1)
+```
+
+```{r include = FALSE}
+if (file_exists("out_serial.rds")) {
+  out_serial <- readRDS2("out_serial.rds")
+} else {
+  out_serial <- serial_pipeline(train_data, seq(35, 42, .5), seq(60, 130, 10), 3:15, 1)
+  saveRDS2(out_serial, "out_serial.rds")
+}
+```
+
+
+### In parallel
 
 ```{r}
-out_serial <- grid1 |> 
-  df2list_rowwise() |> 
-  map_dfr(n_t_j, 3:15, train_data) |> 
-  bind_cols2(grid1)
+parallel_pipeline <- function(data, temp, pulse, n, by = 1) {
+# initial grid:
+  grid <- expand.grid(temp = temp, pulse = pulse)
+
+# adding outer loop:
+  grid <- grid |> 
+    as_tibble() |> 
+    mutate(coeffs = mclapply2(1:nrow(grid), 
+                              function(x) tuned_coefficients(data,
+                                                             grid$temp[x],
+                                                             grid$pulse[x])))
+
+# adding inner loop:  
+  grid |> 
+    df2list_rowwise() |> 
+    mclapply2(n_t_j, n_vals = n, data = data, by = by) |> 
+    bind_rows() |> 
+    bind_cols2(grid)
+}
 ```
 
-A parallelized version (takes 11'):
+Takes 18':
 
-```{r}
-out_parallel <- temp_pulse_grid |> 
-  df2list_rowwise() |> 
-  mclapply2(n_t_j, n_vals = 3:15, data = train_data) |> 
-  bind_rows() |> 
-  bind_cols2(temp_pulse_grid)
+```{r eval = FALSE}
+out_parallel <- parallel_pipeline(train_data,
+                                  seq(35, 42, .5), seq(60, 130, 10), 3:15, 1)
 ```
+
+```{r include = FALSE}
+if (file_exists("out_parallel.rds")) {
+  out_parallel <- readRDS2("out_parallel.rds")
+} else {
+  out_parallel <- parallel_pipeline(train_data,
+                                  seq(35, 42, .5), seq(60, 130, 10), 3:15, 1)
+  saveRDS2(out_parallel, "out_parallel.rds")
+}
+```
+
+### Processing the outputs
 
 ```{r}
 filter(out_serial, j == max(j))
@@ -411,14 +574,8 @@ arrange(out_parallel, desc(j))
 ```
 
 ```{r}
-add_position <- function(x) {
-  x |> 
-    arrange(desc(j)) |> 
-    mutate(order = row_number())
-}
-
-out_all <- bind_rows(mutate(add_position(out_serial), batch = "serial"),
-                     mutate(add_position(out_parallel), batch = "parallel"))
+out_all <- bind_rows(mutate(add_position(out_serial, j), batch = "serial"),
+                     mutate(add_position(out_parallel, j), batch = "parallel"))
 ```
 
 ```{r}
@@ -490,9 +647,4 @@ accuracy(confmat_parallel)
 sensitivity(confmat_parallel)
 specificity(confmat_parallel)
 j_index(confmat_parallel)
-```
-
-```{r}
-sensitivity(confmat_serial)
-specificity(confmat_serial)
 ```
