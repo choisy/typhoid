@@ -1,0 +1,246 @@
+---
+title: "Clinical score design"
+format: html
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r include = FALSE}
+knitr::opts_chunk$set(fig.retina = 2,
+                      fig.align  = "center")
+```
+
+
+## Parameters
+
+The path to the data folder:
+
+```{r}
+data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/typhoid/")
+```
+
+
+## Packages
+
+The required packages:
+
+```{r}
+required_packages <- c("dplyr", "tidyr", "purrr", "themis")
+```
+
+Making sure that the required packages are installed:
+
+```{r}
+to_ins <- required_packages[! required_packages %in% installed.packages()[, "Package"]]
+if (length(to_ins)) install.packages(to_ins)
+rm(required_packages, to_ins)
+```
+
+Loading some of these packages:
+
+```{r message = FALSE}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(themis)
+library(parsnip)
+library(workflows)
+library(dials)
+library(tune)
+```
+
+
+## Reading the clean data
+
+The Nepal data set:
+
+```{r}
+cambodia_bangladesh <- readRDS(paste0(data_path, "clean_data/cambodia_bangladesh.rds"))
+```
+
+
+## Exploring the data
+
+Discrete variables:
+
+```{r}
+countries <- cambodia_bangladesh$country
+cambodia_bangladesh |> 
+  select(where(~ ! is.numeric(.x)), - country) |> 
+  map(~ table(.x, countries))
+```
+
+Continuous variables:
+
+```{r}
+histograms <- function(x) {
+  tmp <- x |> 
+    select(where(is.numeric)) |> 
+    names()
+  opar <- par(mfrow = c(3, 3))
+  walk(tmp, ~ hist(x[[.x]], main = .x))
+  par(opar)
+}
+
+histograms(cambodia_bangladesh)
+histograms(filter(cambodia_bangladesh, country == "Cambodia"))
+histograms(filter(cambodia_bangladesh, country == "Bangladesh"))
+```
+
+
+## Working data
+
+```{r}
+wdata <- cambodia_bangladesh |> 
+  select(-country) |> 
+  na.exclude() |> 
+  mutate(across(where(is.logical), factor))
+```
+
+
+## Balacing data
+
+```{r}
+balanced_data <- wdata |>
+  mutate(
+         across(where(is.logical), factor),
+         across(! contains("culture"), as.numeric)) |> 
+  smote("culture")
+```
+
+
+## Spliting data
+
+```{r}
+#data_split <- initial_split(nepal_symptoms)
+#train_data <- training(data_split)
+#test_data <- testing(data_split)
+```
+
+
+## Discretizing continuous variables
+
+These are the variables we want to discretize in a few categories:
+
+* age
+* fever
+* pulse
+* temperature
+* WBC
+* platelets
+* ALT
+
+Default random forest:
+
+```{r}
+classifier <- rand_forest() |> 
+  set_engine("randomForest") |> 
+  set_mode("classification")
+```
+
+The formula of the classifier:
+
+```{r}
+recette <- recipe(culture ~ ., data = balanced_data)
+```
+
+Default workflow:
+
+```{r}
+wflow <- workflow() |> 
+  add_recipe(recette) |> 
+  add_model(classifier)
+```
+
+```{r}
+fittedRF <- fit(wflow, balanced_data)
+```
+
+```{r}
+predictions <- predict(fittedRF, balanced_data)[[1]]
+```
+
+```{r}
+library(mgcv)
+```
+
+```{r}
+#m1 <- gam(predictions ~ s(age), binomial, predictions, method = "REML")
+#x_val <- seq(min(predictions$age), max(predictions$age), le = 512)
+#y_val <- predict(m1, data.frame(age = x_val), "response")
+#plot(x_val, y_val, ylim = 0:1, type = "l", lwd = 5, col = 4)
+#abline(h = .5)
+```
+
+```{r}
+ <- function(x, y, le = 512) {
+  m1 <- gam(y ~ s(x), binomial, method = "REML")
+  x_val <- seq(min(x), max(x), le = le)
+  y_val <- predict(m1, data.frame(x = x_val), "response")
+  plot(x_val, y_val, ylim = 0:1, type = "l", lwd = 5, col = 4)
+}
+
+f(balanced_data$age, predictions)
+f(balanced_data$fever, predictions)
+f(balanced_data$pulse, predictions)
+f(balanced_data$temperature, predictions)
+f(balanced_data$WBC, predictions)
+f(balanced_data$platelets, predictions)
+f(balanced_data$ALT, predictions)
+```
+
+Let's look at PARTIAL DEPENDENCE PLOTS instead.
+
+
+
+Defining the random forest classifier:
+
+```{r}
+model2tune <- rand_forest(mtry = tune(), trees = 1000, min_n = tune()) |> 
+  set_engine("randomForest") |> 
+  set_mode("classification")
+```
+
+
+The workflow:
+
+```{r}
+wflow <- workflow() |> 
+  add_recipe(recette) |> 
+  add_model(model2tune)
+```
+
+The grid:
+
+```{r}
+hpgrid <- grid_regular(mtry(range = c(15, 26)),
+                       min_n(range = c(2, 12)),
+                       levels = 5)
+```
+
+```{r}
+trees_folds <- vfold_cv(wdata)
+```
+
+```{r}
+system.time(explorations <- tune_grid(wflow, resamples = trees_folds, grid = hpgrid))
+```
+
+
+
+
+
+
+```{r}
+cambodia_bangladesh_smoted <- cambodia_bangladesh |>
+  na.exclude() |> 
+  select(- country) |> 
+  mutate(across(where(is.logical), factor),
+         across(! contains("culture"), as.numeric)) |> 
+  smote("culture", k = 5, over_ratio = 1)
+```
+
+
