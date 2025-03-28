@@ -91,7 +91,7 @@ nepal <- files[grep("nepa", files)] |>
                   Score8), as.integer),
          across(c(Splenomegaly, Hepatomegaly),
                 ~ .x == "1" | .x == "TRUE" | .x == "Yes"),
-         across(Sex, ~ c("female", "male")[(.x == "1" | .x == "Male") + 1]),
+         across(Sex, ~ factor(c("female", "male")[(.x == "1" | .x == "Male") + 1])),
          across(Typhoid_IgM, ~ factor2(sub("N", "0", substring(.x, 1, 1)))),
          across(`CRP_mg/L`, ~ factor2(sub(" *\\(.*\\).*$", "", .x),
                                       levels = crp_levels)),
@@ -113,10 +113,10 @@ cambodia_bangladesh <- files[grep("camb", files)] |>
          `IgM life assay d0`, `CRP Group...63`, st) |> 
   mutate(across(c(culture, cough, diarrhoea, vomiting, abdopain, constipation,
                   headache, spleen, hepat, ), ~ .x > 0),
-         across(sex, ~ c("female", "male")[.x + 1]),
+         across(sex, ~ factor(c("female", "male")[.x + 1])),
          across(`CRP Group...63`, ~ factor2(crp_levels[.x + 1], levels = crp_levels)),
          across(`IgM life assay d0`, factor2),
-         across(st, ~ c("Cambodia", "Bangladesh")[.x]),
+         across(st, ~ factor(c("Cambodia", "Bangladesh")[.x])),
          across(c(feverdays, pulse, alt), as.integer)) |> 
   setNames(c(var_names, "country"))
 ```
