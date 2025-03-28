@@ -112,7 +112,7 @@ cambodia_bangladesh <- files[grep("camb", files)] |>
          constipation, headache, pulse, `temp A`, spleen, hepat, wbc, plts, alt,
          `IgM life assay d0`, `CRP Group...63`, st) |> 
   mutate(across(c(culture, cough, diarrhoea, vomiting, abdopain, constipation,
-                  headache, spleen, hepat, ), ~ .x > 1),
+                  headache, spleen, hepat, ), ~ .x > 0),
          across(sex, ~ c("female", "male")[.x + 1]),
          across(`CRP Group...63`, ~ factor2(crp_levels[.x + 1], levels = crp_levels)),
          across(`IgM life assay d0`, factor2),
