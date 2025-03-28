@@ -10,6 +10,7 @@ editor_options:
 knitr::opts_chunk$set(message = FALSE)
 ```
 
+
 ## Parameters
 
 The path to the data folder:
@@ -19,6 +20,7 @@ data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
                     "OneDrive-OxfordUniversityClinicalResearchUnit/",
                     "GitHub/choisy/typhoid/")
 ```
+
 
 ## Packages
 
@@ -38,8 +40,19 @@ if (length(to_inst)) install.packages(to_inst)
 Loading some of these packages:
 
 ```{r}
+library(readxl)
 library(dplyr)
 ```
+
+
+## Utilitary function
+
+Tuning `factor()`:
+
+```{r}
+factor2 <- function(...) factor(..., ordered = TRUE)
+```
+
 
 ## Reading and cleaning data
 
@@ -49,44 +62,70 @@ The files in the raw data folder:
 files <- dir(paste0(data_path, "raw_data"), full = TRUE)
 ```
 
+The names of the variables:
+
+```{r}
+var_names <- c("culture", "sex", "age", "fever", "cough", "diarrhea", "vomiting",
+               "abdominal_pain", "constipation", "headache", "pulse", "temperature",
+               "splenomegaly", "hepatomegaly", "WBC", "platelets", "ALT", "IgM", "CRP")
+```
+
+CRP levels:
+
+```{r}
+crp_levels <- c("<10", "10-40", "40-80", ">80")
+```
+
 Reading and cleaning raw data from Nepal:
 
 ```{r}
 nepal <- files[grep("nepa", files)] |>
-  readxl::read_excel() |> 
-  rename(WBC       = WBC_gro,
-         platelets = Platelets_gro,
-         vomiting  = `Vomiting...26`) |> 
+  read_excel() |> 
+  rename(platelets = Platelets_gro,
+         WBC       = WBC_gro) |> 
   select(- contains("gro"), - contains(">"), - contains("<"), - StudyNo, - Study,
-         - DateStudy, - HospitalNo, - `Vomiting...18`, - culture) |> 
-  mutate(across(c(Age, Pulse, platelets, AST, ALT, Fever, Cough, Diarrhoea, vomiting,
-                  Abdopain, Constipation, Headache, Anorexia, Nausea), as.integer),
-         across(c(scorev1, scorev2, scorev3, scorev4, Score8),
-                ~ factor(.x, ordered = TRUE)),
+         - AST, - DateStudy, - HospitalNo, - `Vomiting...18`, - culture, - Anorexia,
+         - Nausea) |> 
+  mutate(across(c(Age, Pulse, platelets, ALT, Fever, Cough, Diarrhoea, `Vomiting...26`,
+                  Abdopain, Constipation, Headache, scorev1, scorev2, scorev3, scorev4,
+                  Score8), as.integer),
          across(c(Splenomegaly, Hepatomegaly),
                 ~ .x == "1" | .x == "TRUE" | .x == "Yes"),
          across(Sex, ~ c("female", "male")[(.x == "1" | .x == "Male") + 1]),
-         across(Typhoid_IgM,
-                ~ factor(sub("N", "0", substring(.x, 1, 1)), ordered = TRUE)),
-         across(`CRP_mg/L`, ~ factor(sub(" *\\(.*\\).*$", "", .x),
-                                     levels = c("<10", "10-40", "40-80", ">80"),
-                                     ordered = TRUE)),
+         across(Typhoid_IgM, ~ factor2(sub("N", "0", substring(.x, 1, 1)))),
+         across(`CRP_mg/L`, ~ factor2(sub(" *\\(.*\\).*$", "", .x),
+                                      levels = crp_levels)),
          across(BloodCSResult, ~ .x == "SPA" | .x == "ST")) |> 
-  select(BloodCSResult, Sex, Age, scorev1, scorev2, scorev3, scorev4, Score8,
-         Fever, Cough, Diarrhoea, vomiting, Abdopain, Constipation, Headache, Anorexia,
-         Nausea, Pulse, OralTemperature, Splenomegaly, Hepatomegaly, everything())
+  select(BloodCSResult, Sex, Age,
+         Fever, Cough, Diarrhoea, `Vomiting...26`, Abdopain, Constipation, Headache,
+         Pulse, OralTemperature, Splenomegaly, Hepatomegaly, WBC, platelets, ALT,
+         Typhoid_IgM, `CRP_mg/L`, scorev1, scorev2, scorev3, scorev4, Score8) |> 
+  setNames(c(var_names, paste0("score", c(1:4, 8))))
 ```
 
-Reading and cleaning raw data from Cambodia and Bengladesh:
+Reading and cleaning raw data from Cambodia and Bangladesh:
 
 ```{r}
-cambodia_bangladesh <- readxl::read_excel(files[grep("camb", files)])
+cambodia_bangladesh <- files[grep("camb", files)] |>
+  read_excel() |> 
+  select(culture, sex, Age, feverdays, cough, diarrhoea, vomiting, abdopain,
+         constipation, headache, pulse, `temp A`, spleen, hepat, wbc, plts, alt,
+         `IgM life assay d0`, `CRP Group...63`, st) |> 
+  mutate(across(c(culture, cough, diarrhoea, vomiting, abdopain, constipation,
+                  headache, spleen, hepat, ), ~ .x > 1),
+         across(sex, ~ c("female", "male")[.x + 1]),
+         across(`CRP Group...63`, ~ factor2(crp_levels[.x + 1], levels = crp_levels)),
+         across(`IgM life assay d0`, factor2),
+         across(st, ~ c("Cambodia", "Bangladesh")[.x]),
+         across(c(feverdays, pulse, alt), as.integer)) |> 
+  setNames(c(var_names, "country"))
 ```
 
 Saving to disk:
 
 ```{r}
 saveRDS(nepal, paste0(data_path, "clean_data/nepal.rds"))
+saveRDS(cambodia_bangladesh, paste0(data_path, "clean_data/cambodia_bangladesh.rds"))
 ```
 
 
