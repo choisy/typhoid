@@ -1,0 +1,547 @@
+---
+title: "Clinical score design"
+format: html
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r include = FALSE}
+knitr::opts_chunk$set(fig.retina = 2,
+                      fig.align  = "center")
+```
+
+
+## Parameters
+
+The path to the data folder:
+
+```{r}
+data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/typhoid/")
+```
+
+
+## Packages
+
+The required packages:
+
+```{r}
+required_packages <- c("dplyr", "tidyr", "purrr", "themis", "parsnip", "workflows",
+                       "dials", "tune", "mgcv", "finetune")
+```
+
+Making sure that the required packages are installed:
+
+```{r}
+to_ins <- required_packages[! required_packages %in% installed.packages()[, "Package"]]
+if (length(to_ins)) install.packages(to_ins)
+rm(required_packages, to_ins)
+```
+
+Loading some of these packages:
+
+```{r message = FALSE}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(themis)
+library(parsnip)
+library(workflows)
+library(dials)
+library(tune)
+library(mgcv)
+library(finetune)
+```
+
+
+## Reading the clean data
+
+The Nepal data set:
+
+```{r}
+cambodia_bangladesh <- readRDS(paste0(data_path, "clean_data/cambodia_bangladesh.rds"))
+nepal <- readRDS(paste0(data_path, "clean_data/nepal.rds"))
+```
+
+
+## Exploring the data
+
+Discrete variables:
+
+```{r}
+countries <- cambodia_bangladesh$country
+cambodia_bangladesh |> 
+  select(where(~ ! is.numeric(.x)), - country) |> 
+  map(~ table(.x, countries))
+```
+
+Continuous variables:
+
+```{r}
+histograms <- function(x) {
+  tmp <- x |> 
+    select(where(is.numeric)) |> 
+    names()
+  opar <- par(mfrow = c(3, 3))
+  walk(tmp, ~ hist(x[[.x]], main = .x))
+  par(opar)
+}
+
+histograms(cambodia_bangladesh)
+histograms(filter(cambodia_bangladesh, country == "Cambodia"))
+histograms(filter(cambodia_bangladesh, country == "Bangladesh"))
+```
+
+
+## Working data
+
+```{r}
+working_data <- cambodia_bangladesh |> 
+  select(-country) |> 
+  na.exclude() |> 
+  mutate(across(where(is.logical), factor))
+```
+
+```{r}
+testing_data <- nepal |> 
+  select(- starts_with("score")) |> 
+  na.exclude() |> 
+  mutate(across(where(is.logical), factor))
+```
+
+
+## Balacing the training data
+
+```{r}
+balanced_data <- working_data |>
+  mutate(across(where(is.logical), factor),
+         across(! contains("culture"), as.numeric)) |> 
+  smote("culture")
+```
+
+```{r}
+testing_data <- testing_data |>
+  mutate(across(where(is.logical), factor),
+         across(! contains("culture"), as.numeric))
+```
+
+
+## Spliting data
+
+```{r}
+#data_split <- initial_split(nepal_symptoms)
+#train_data <- training(data_split)
+#test_data <- testing(data_split)
+```
+
+
+## Random-forest models
+
+### Non-tuned random forest model
+
+The model:
+
+```{r}
+rf_default <- workflow(culture ~ ., rand_forest("classification", "randomForest"))
+```
+
+The model fitted:
+
+```{r}
+#rf_default_fitted <- fit(rand_forest("classification", "randomForest"),
+#                         culture ~ ., balanced_data)
+
+rf_default_fitted <- fit(rf_default, balanced_data)
+```
+
+Testing:
+
+```{r}
+rf_default_fitted_testing <- augment(rf_default_fitted, testing_data)
+conf_mat(rf_default_fitted_testing, culture, .pred_class)
+metric_set(accuracy, specificity, sensitivity)(rf_default_fitted_testing,
+                                               truth = culture, estimate = .pred_class)
+```
+
+ROC curve and AUC:
+
+```{r}
+rf_default_fitted_testing |>
+  roc_curve(truth = culture, .pred_FALSE) |> 
+  autoplot()
+
+roc_auc(rf_default_fitted_testing, truth = culture, .pred_FALSE)
+```
+
+```{r}
+brier_class(rf_default_fitted_testing, truth = culture, .pred_FALSE)
+```
+
+
+### Tuned random forest model
+
+```{r}
+# mtry <- floor(sqrt(ncol(balanced_data))) # number of variables samples
+# trees <- 500                             # number of trees
+# min_n <- 1                               # minimum size of terminal nodes
+```
+
+
+```{r}
+rf_tune <- workflow(culture ~ ., rand_forest("classification",
+                                             "randomForest",
+                                             tune(), tune(), tune()))
+```
+
+```{r}
+cv_folds <- vfold_cv(balanced_data)
+```
+
+```{r}
+rf_tune_res <- tune_grid(rf_tune, cv_folds, grid = 10)
+```
+
+```{r}
+show_best(rf_tune_res, metric = "roc_auc")
+show_best(rf_tune_res, metric = "accuracy")
+show_best(rf_tune_res, metric = "brier_class")
+```
+
+```{r}
+best_parameters <- select_best(rf_tune_res, metric = "roc_auc")
+```
+
+```{r}
+rf_tuned <- finalize_workflow(rf_tune, best_parameters)
+rf_tuned_fitted <- fit(rf_tuned, balanced_data)
+
+```
+
+Testing:
+
+```{r}
+rf_tuned_fitted_testing <- augment(rf_tuned_fitted, testing_data)
+conf_mat(rf_tuned_fitted_testing, culture, .pred_class)
+metric_set(accuracy, specificity, sensitivity)(rf_tuned_fitted_testing,
+                                               truth = culture, estimate = .pred_class)
+```
+
+ROC curve and AUC:
+
+```{r}
+rf_tuned_fitted_testing |>
+  roc_curve(truth = culture, .pred_FALSE) |> 
+  autoplot()
+
+roc_auc(rf_tuned_fitted_testing, truth = culture, .pred_FALSE)
+```
+
+```{r}
+brier_class(rf_tuned_fitted_testing, truth = culture, .pred_FALSE)
+```
+
+### Other take
+
+Our evaluation metrics:
+
+```{r}
+evaluation_metrics <- metric_set(roc_auc, accuracy, brier_class)
+```
+
+The random forest classifier:
+
+```{r}
+rf_specifications <- rand_forest("classification", "randomForest",
+                                 mtry  = tune(),  # number of variables for each tree
+                                 trees = tune(),  # number of trees
+                                 min_n = tune())  # minimum number of obs per node
+```
+
+The recipe:
+
+```{r}
+typhoid_recipe <- recipe(culture ~ ., balanced_data)
+```
+
+The workflow:
+
+```{r}
+typhoid_rf <- workflow() |> 
+  add_recipe(typhoid_recipe) |> 
+  add_model(rf_specifications)
+```
+
+10-fold cross-validation:
+
+```{r}
+cv_folds <- vfold_cv(balanced_data)
+```
+
+#### Experiments
+
+79.041":
+
+```{r}
+system.time(typhoid_rf_res1 <- tune_grid(typhoid_rf, cv_folds, grid = 10))
+```
+
+766.677":
+
+```{r}
+system.time(typhoid_rf_res2 <- tune_grid(typhoid_rf, cv_folds, grid = 100))
+```
+
+342.379":
+
+```{r}
+system.time(typhoid_rf_res3 <- tune_race_anova(typhoid_rf, cv_folds, grid = 100))
+```
+
+334.091":
+
+```{r}
+system.time(typhoid_rf_res3b <- tune_race_anova(typhoid_rf, cv_folds, grid = 100,
+                                                metrics = evaluation_metrics))
+```
+
+260.310":
+
+```{r}
+system.time(typhoid_rf_res3c <- tune_race_anova(typhoid_rf, cv_folds, grid = 100,
+                                                metrics = metric_set(accuracy)))
+```
+
+333.860":
+
+```{r}
+system.time(typhoid_rf_res4 <- tune_race_win_loss(typhoid_rf, cv_folds, grid = 100))
+```
+
+666.483":
+
+```{r}
+system.time(typhoid_rf_res5 <- tune_sim_anneal(typhoid_rf, cv_folds, iter = 100))
+```
+
+#### Experiments with space-filling grids
+
+```{r}
+gridLH100 <- rf_specifications |> 
+  extract_parameter_set_dials() |> 
+  update(mtry = mtry(c(1L, 18L))) |> 
+  grid_space_filling(size = 100, type = "latin_hypercube")
+```
+
+354.976":
+
+```{r}
+system.time(typhoid_rf_res6 <- tune_race_anova(typhoid_rf, cv_folds, grid = gridLH100))
+```
+
+301.837":
+
+```{r}
+system.time(typhoid_rf_res7 <- tune_race_win_loss(typhoid_rf, cv_folds,
+                                                  grid = gridLH100))
+```
+
+```{r}
+show_best(typhoid_rf_res6)
+show_best(typhoid_rf_res7)
+```
+
+```{r}
+system.time(typhoid_rf_res8 <- tune_race_win_loss(typhoid_rf, cv_folds,
+                                                  grid = gridLH100))
+```
+
+
+#### Explore results of experiments:
+
+```{r}
+show_best(typhoid_rf_res1)
+show_best(typhoid_rf_res2)
+show_best(typhoid_rf_res3)
+show_best(typhoid_rf_res4)
+show_best(typhoid_rf_res5)
+```
+
+```{r}
+compare_best <- function(batches, metric) {
+  map_dfr(batches,
+          ~ unlist(show_best(.x, metric = metric)[1, c("mean", "std_err")]),
+          .id = "batch") |> 
+    mutate(metric = metric) |> 
+    select(batch, metric, everything())
+}
+```
+
+```{r}
+map_named <- function(x, f, ...) {
+  map(setNames(x, x), f, ...)
+}
+```
+
+```{r}
+batches <- map_named(ls(pattern = "typhoid_rf_res"), get)
+```
+
+```{r}
+batches[-(4:5)] |> 
+  compare_best("roc_auc") |> 
+  arrange(desc(mean)) |> 
+  as.data.frame()
+```
+
+```{r}
+map_dfr(c("roc_auc", "accuracy", "brier_class"), compare_best, batches = batches)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+The model predictions:
+
+```{r}
+rf_predictions <- predict(rf_fitted, balanced_data)[[1]]
+```
+
+
+
+
+
+## Discretizing continuous variables
+
+These are the variables we want to discretize in a few categories:
+
+* age
+* fever
+* pulse
+* temperature
+* WBC
+* platelets
+* ALT
+
+Default random forest:
+
+```{r}
+classifier <- rand_forest() |> 
+  set_engine("randomForest") |> 
+  set_mode("classification")
+```
+
+The formula of the classifier:
+
+```{r}
+recette <- recipe(culture ~ ., data = balanced_data)
+```
+
+Default workflow:
+
+```{r}
+wflow <- workflow() |> 
+  add_recipe(recette) |> 
+  add_model(classifier)
+```
+
+```{r}
+fittedRF <- fit(wflow, balanced_data)
+```
+
+```{r}
+predictions <- predict(fittedRF, balanced_data)[[1]]
+```
+
+```{r}
+#m1 <- gam(predictions ~ s(age), binomial, predictions, method = "REML")
+#x_val <- seq(min(predictions$age), max(predictions$age), le = 512)
+#y_val <- predict(m1, data.frame(age = x_val), "response")
+#plot(x_val, y_val, ylim = 0:1, type = "l", lwd = 5, col = 4)
+#abline(h = .5)
+```
+
+```{r}
+pdplot <- function(x, y, le = 512, method = "REML", ...) {
+  m1 <- gam(y ~ s(x), binomial, method = method, ...)
+  x_val <- seq(min(x), max(x), le = le)
+  y_val <- predict(m1, data.frame(x = x_val), "response")
+  plot(x_val, y_val, ylim = 0:1, type = "l", lwd = 5, col = 4)
+}
+
+pdplot(balanced_data$age, predictions)
+pdplot(balanced_data$fever, predictions)
+pdplot(balanced_data$pulse, predictions)
+pdplot(balanced_data$temperature, predictions)
+pdplot(balanced_data$WBC, predictions)
+pdplot(balanced_data$platelets, predictions)
+pdplot(balanced_data$ALT, predictions)
+```
+
+Let's look at PARTIAL DEPENDENCE PLOTS instead.
+
+
+
+
+
+
+
+
+Defining the random forest classifier:
+
+```{r}
+model2tune <- rand_forest(mtry = tune(), trees = 1000, min_n = tune()) |> 
+  set_engine("randomForest") |> 
+  set_mode("classification")
+```
+
+
+The workflow:
+
+```{r}
+wflow <- workflow() |> 
+  add_recipe(recette) |> 
+  add_model(model2tune)
+```
+
+The grid:
+
+```{r}
+hpgrid <- grid_regular(mtry(range = c(15, 26)),
+                       min_n(range = c(2, 12)),
+                       levels = 5)
+```
+
+```{r}
+trees_folds <- vfold_cv(balanced_data)
+```
+
+```{r}
+system.time(explorations <- tune_grid(wflow, resamples = trees_folds, grid = hpgrid))
+```
+
+
+
+
+
+
+```{r}
+cambodia_bangladesh_smoted <- cambodia_bangladesh |>
+  na.exclude() |> 
+  select(- country) |> 
+  mutate(across(where(is.logical), factor),
+         across(! contains("culture"), as.numeric)) |> 
+  smote("culture", k = 5, over_ratio = 1)
+```
+
+

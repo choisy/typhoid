@@ -28,7 +28,8 @@ data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
 The required packages:
 
 ```{r}
-required_packages <- c("dplyr", "tidyr", "purrr", "themis")
+required_packages <- c("dplyr", "purrr", "rsample", "yardstick", "recipes", "themis",
+                       "parsnip", "workflows", "tune", "dials", "finetune")
 ```
 
 Making sure that the required packages are installed:
@@ -43,204 +44,286 @@ Loading some of these packages:
 
 ```{r message = FALSE}
 library(dplyr)
-library(tidyr)
 library(purrr)
+library(rsample)
+library(yardstick)
+library(recipes)
 library(themis)
 library(parsnip)
 library(workflows)
-library(dials)
 library(tune)
+library(dials)
+library(finetune)
+```
+
+
+## Utilitary functions
+
+```{r}
+file_exists <- function(x) file.exists(paste0(data_path, "cache/", x))
+readRDS2 <- function(x) readRDS(paste0(data_path, "cache/", x))
+saveRDS2 <- function(object, file) saveRDS(object, paste0(data_path, "cache/", file))
+```
+
+```{r}
+vfold_cv_constructor <- function(f) function(x, index = NULL, ...) {
+  if (is.null(index)) return(map(x$splits, f, ...))
+  if (length(index) == 1) return(f(x$splits[[index]], ...))
+  map(x$splits[index], f, ...)
+}
+
+analysis2 <- vfold_cv_constructor(analysis)
+assessment2 <- vfold_cv_constructor(assessment)
+```
+
+```{r}
+mclapply2 <- function(..., nb_cores = NULL) {
+  if (is.null(nb_cores)) nb_cores <- parallel::detectCores() - 1
+  parallel::mclapply(..., mc.cores = nb_cores)
+}
+```
+
+```{r}
+seq_along2 <- function(x) setNames(seq_along(x), names(x))
+```
+
+```{r}
+map_named <- function(x, f, ...) map(setNames(x, x), f, ...)
 ```
 
 
 ## Reading the clean data
 
-The Nepal data set:
+The data sets:
 
 ```{r}
 cambodia_bangladesh <- readRDS(paste0(data_path, "clean_data/cambodia_bangladesh.rds"))
+nepal <- readRDS(paste0(data_path, "clean_data/nepal.rds"))
 ```
 
 
-## Exploring the data
-
-Discrete variables:
+## Preprocessing the Cambodia and Bangladesh data
 
 ```{r}
-countries <- cambodia_bangladesh$country
-cambodia_bangladesh |> 
-  select(where(~ ! is.numeric(.x)), - country) |> 
-  map(~ table(.x, countries))
-```
-
-Continuous variables:
-
-```{r}
-histograms <- function(x) {
-  tmp <- x |> 
-    select(where(is.numeric)) |> 
-    names()
-  opar <- par(mfrow = c(3, 3))
-  walk(tmp, ~ hist(x[[.x]], main = .x))
-  par(opar)
-}
-
-histograms(cambodia_bangladesh)
-histograms(filter(cambodia_bangladesh, country == "Cambodia"))
-histograms(filter(cambodia_bangladesh, country == "Bangladesh"))
-```
-
-
-## Working data
-
-```{r}
-wdata <- cambodia_bangladesh |> 
+cambodia_bangladesh2 <- cambodia_bangladesh |> 
   select(-country) |> 
-  na.exclude() |> 
-  mutate(across(where(is.logical), factor))
+  na.exclude()
+
+nepal2 <- nepal |> 
+  select(-starts_with("score")) |> 
+  na.exclude()
+
+combined_data <- bind_rows(cambodia_bangladesh2, nepal2)
+ind <- list(analysis = seq(nrow(cambodia_bangladesh2)),
+            assessment = nrow(cambodia_bangladesh2) + seq(nrow(nepal2)))
+splits <- make_splits(ind, combined_data)
+training_data <- training(splits)
+testing_data <- testing(splits)
+
+rm(cambodia_bangladesh2, nepal2)
 ```
 
 
-## Balacing data
+## Recipes
+
+A step that we could potentially add is 
 
 ```{r}
-balanced_data <- wdata |>
-  mutate(
-         across(where(is.logical), factor),
-         across(! contains("culture"), as.numeric)) |> 
-  smote("culture")
+recipe0 <- recipe(culture ~ ., training_data) |> 
+  step_bin2factor(where(is.logical))
+
+recipe0_dummy <- recipe0 |> 
+  step_dummy(all_nominal_predictors())
+
+recipe0_smote <- recipe0 |> 
+  step_smotenc(culture)
+
+recipe0_dummy_smote <- recipe0_dummy |> 
+  step_smotenc(culture)
+
+recipes_names <- ls(pattern = "recipe0")
+recipes <- map_named(recipes_names, get)
+rm(recipes_names)
 ```
 
+Note that SMOTE is rightly applied only to the training data (i.e. the one used to
+define the recipe, here `cambodia_bangladesh`).
 
-## Spliting data
-
-```{r}
-#data_split <- initial_split(nepal_symptoms)
-#train_data <- training(data_split)
-#test_data <- testing(data_split)
-```
-
-
-## Discretizing continuous variables
-
-These are the variables we want to discretize in a few categories:
-
-* age
-* fever
-* pulse
-* temperature
-* WBC
-* platelets
-* ALT
-
-Default random forest:
+## Resampling of the training data
 
 ```{r}
-classifier <- rand_forest() |> 
-  set_engine("randomForest") |> 
-  set_mode("classification")
-```
-
-The formula of the classifier:
-
-```{r}
-recette <- recipe(culture ~ ., data = balanced_data)
-```
-
-Default workflow:
-
-```{r}
-wflow <- workflow() |> 
-  add_recipe(recette) |> 
-  add_model(classifier)
+training_data |> 
+  group_by(culture) |> 
+  tally()
 ```
 
 ```{r}
-fittedRF <- fit(wflow, balanced_data)
+set.seed(456)
+cv_folds <- vfold_cv(training_data, strata = culture)
+```
+
+## Random forest models
+
+### Non-tuned model
+
+```{r}
+rf_default <- rand_forest("classification", "randomForest")
 ```
 
 ```{r}
-predictions <- predict(fittedRF, balanced_data)[[1]]
+rf_default_workflows <- map(recipes, workflow, rf_default)
 ```
 
-```{r}
-library(mgcv)
+14":
+
+```{r eval = FALSE}
+set.seed(946)
+rf_default_fitted_res <- map(rf_default_workflows, fit_resamples, cv_folds)
 ```
 
-```{r}
-#m1 <- gam(predictions ~ s(age), binomial, predictions, method = "REML")
-#x_val <- seq(min(predictions$age), max(predictions$age), le = 512)
-#y_val <- predict(m1, data.frame(age = x_val), "response")
-#plot(x_val, y_val, ylim = 0:1, type = "l", lwd = 5, col = 4)
-#abline(h = .5)
-```
-
-```{r}
- <- function(x, y, le = 512) {
-  m1 <- gam(y ~ s(x), binomial, method = "REML")
-  x_val <- seq(min(x), max(x), le = le)
-  y_val <- predict(m1, data.frame(x = x_val), "response")
-  plot(x_val, y_val, ylim = 0:1, type = "l", lwd = 5, col = 4)
+```{r include = FALSE}
+if (file_exists("rf_default_fitted_res.rds")) {
+  rf_default_fitted_res <- readRDS2("rf_default_fitted_res.rds")
+} else {
+  rf_default_fitted_res <- map(rf_default_workflows, fit_resamples, cv_folds)
+  saveRDS2(rf_default_fitted_res, "rf_default_fitted_res.rds")
 }
-
-f(balanced_data$age, predictions)
-f(balanced_data$fever, predictions)
-f(balanced_data$pulse, predictions)
-f(balanced_data$temperature, predictions)
-f(balanced_data$WBC, predictions)
-f(balanced_data$platelets, predictions)
-f(balanced_data$ALT, predictions)
-```
-
-Let's look at PARTIAL DEPENDENCE PLOTS instead.
-
-
-
-Defining the random forest classifier:
-
-```{r}
-model2tune <- rand_forest(mtry = tune(), trees = 1000, min_n = tune()) |> 
-  set_engine("randomForest") |> 
-  set_mode("classification")
-```
-
-
-The workflow:
-
-```{r}
-wflow <- workflow() |> 
-  add_recipe(recette) |> 
-  add_model(model2tune)
-```
-
-The grid:
-
-```{r}
-hpgrid <- grid_regular(mtry(range = c(15, 26)),
-                       min_n(range = c(2, 12)),
-                       levels = 5)
 ```
 
 ```{r}
-trees_folds <- vfold_cv(wdata)
+map(rf_default_fitted_res, collect_metrics)
+```
+
+
+### Tuned model
+
+The random forest classifier:
+
+```{r}
+rf_to_tune <- rand_forest("classification", "randomForest",
+                          mtry  = tune(),           # number of variables for each tree
+                          trees = tune(),           # number of trees
+                          min_n = tune())           # minimum number of obs per node
 ```
 
 ```{r}
-system.time(explorations <- tune_grid(wflow, resamples = trees_folds, grid = hpgrid))
+rf_to_tune_workflows <- map(recipes, workflow, rf_to_tune)
 ```
 
+#### Grid search
 
-
-
-
+Space filling Latin hypercube grids:
 
 ```{r}
-cambodia_bangladesh_smoted <- cambodia_bangladesh |>
-  na.exclude() |> 
-  select(- country) |> 
-  mutate(across(where(is.logical), factor),
-         across(! contains("culture"), as.numeric)) |> 
-  smote("culture", k = 5, over_ratio = 1)
+SFGLH100 <- rf_to_tune |> 
+  extract_parameter_set_dials() |> 
+  update(mtry = mtry(c(1, ncol(bake(prep(recipe0), NULL)) - 1))) |> 
+  grid_space_filling(size = 100, type = "latin_hypercube")
+
+SFGLH100dummy <- rf_to_tune |> 
+  extract_parameter_set_dials() |> 
+  update(mtry = mtry(c(1, ncol(bake(prep(recipe0_dummy), NULL)) - 1))) |> 
+  grid_space_filling(size = 100, type = "latin_hypercube")
+
+SFGLH100grids <- list(SFGLH100, SFGLH100dummy) |>
+  rep(each = 2)
 ```
 
+A serial version looks like this (27'):
+
+```{r eval = FALSE}
+rf_tune_race_anova_sfglh100 <- map2(rf_to_tune_workflows, SFGLH100grids,
+                                    ~ tune_race_anova(.x, cv_folds, grid = .y))
+```
+
+Parallel version 
+
+```{r}
+mapping_race <- function(f) {
+  mclapply2(seq_along2(rf_to_tune_workflows),
+            function(x) f(rf_to_tune_workflows[[x]],
+                          cv_folds,
+                          grid = SFGLH100grids[[x]]))
+}
+```
+
+(11'29"):
+
+```{r eval = FALSE}
+rf_tune_race_anova_sfglh100 <- mapping_race(tune_race_anova)
+```
+
+```{r include = FALSE}
+if (file_exists("rf_tune_race_anova_sfglh100.rds")) {
+  rf_tune_race_anova_sfglh100 <- readRDS2("rf_tune_race_anova_sfglh100.rds")
+} else {
+  rf_tune_race_anova_sfglh100 <- mapping_race(tune_race_anova)
+  saveRDS2(rf_tune_race_anova_sfglh100, "rf_tune_race_anova_sfglh100.rds")
+}
+```
+
+The win-loss race (8'12"):
+
+```{r eval = FALSE}
+rf_tune_race_win_loss_sfglh100 <- mapping_race(tune_race_win_loss)
+```
+
+```{r include = FALSE}
+if (file_exists("rf_tune_race_win_loss_sfglh100.rds")) {
+  rf_tune_race_win_loss_sfglh100 <- readRDS2("rf_tune_race_win_loss_sfglh100.rds")
+} else {
+  rf_tune_race_anova_sfglh100p <- mapping_race(tune_race_anova)
+  saveRDS2(rf_tune_race_win_loss_sfglh100, "rf_tune_race_win_loss_sfglh100.rds")
+}
+```
+
+
+### Select best model
+
+```{r}
+show_best_metric <- function(x, metric = "roc_auc") {
+  x |>
+    collect_metrics() |>
+    filter(.metric == metric) |> 
+    arrange(desc(mean)) |> 
+    select(mtry, trees, min_n, mean) |> 
+    head(1)
+}
+```
+
+```{r}
+all_resampled_fittings <- list(rf_tune_race_anova_sfglh100,
+                               rf_tune_race_win_loss_sfglh100)
+
+best_recipe <- all_resampled_fittings |>
+  unlist(FALSE) |> 
+  map_dfr(show_best_metric, .id = "recipe") |> 
+  arrange(desc(mean)) |> 
+  head(1) |> 
+  pull(recipe)
+
+best_parameters <- all_resampled_fittings |>
+  map(~ .x[best_recipe]) |> 
+  unlist(FALSE) |> 
+  map(show_best_metric) |> 
+  bind_rows() |>
+  arrange() |> 
+  tail(1)
+
+tuned_rf <- rf_to_tune_workflows[[best_recipe]] |>
+  finalize_workflow(best_parameters)
+
+tuned_rf |> 
+  fit_resamples(cv_folds) |> 
+  collect_metrics()
+
+a <- last_fit(tuned_rf, splits)
+
+collect_metrics(a)
+
+a |>
+  collect_predictions() |> 
+  roc_curve(truth = culture, .pred_yes) |> 
+  autoplot()
+```
 
