@@ -81,26 +81,19 @@ Reading and cleaning raw data from Nepal:
 ```{r}
 nepal <- files[grep("nepa", files)] |>
   read_excel() |> 
-  rename(platelets = Platelets_gro,
-         WBC       = WBC_gro) |> 
-  select(- contains("gro"), - contains(">"), - contains("<"), - StudyNo, - Study,
-         - AST, - DateStudy, - HospitalNo, - `Vomiting...18`, - culture, - Anorexia,
-         - Nausea) |> 
-  mutate(across(c(Age, Pulse, platelets, ALT, Fever, Cough, Diarrhoea, `Vomiting...26`,
-                  Abdopain, Constipation, Headache, scorev1, scorev2, scorev3, scorev4,
-                  Score8), as.integer),
-         across(c(Splenomegaly, Hepatomegaly),
-                ~ .x == "1" | .x == "TRUE" | .x == "Yes"),
-         across(Sex, ~ factor(c("female", "male")[(.x == "1" | .x == "Male") + 1])),
-         across(Typhoid_IgM, ~ factor2(sub("N", "0", substring(.x, 1, 1)))),
-         across(`CRP_mg/L`, ~ factor2(sub(" *\\(.*\\).*$", "", .x),
-                                      levels = crp_levels)),
-         across(BloodCSResult, ~ .x == "SPA" | .x == "ST")) |> 
   select(BloodCSResult, Sex, Age,
          Fever, Cough, Diarrhoea, `Vomiting...26`, Abdopain, Constipation, Headache,
-         Pulse, OralTemperature, Splenomegaly, Hepatomegaly, WBC, platelets, ALT,
-         Typhoid_IgM, `CRP_mg/L`, scorev1, scorev2, scorev3, scorev4, Score8) |> 
-  setNames(c(var_names, paste0("score", c(1:4, 8))))
+         Pulse, OralTemperature, Splenomegaly, Hepatomegaly, WBC_gro, Platelets_gro,
+         ALT, Typhoid_IgM, `CRP_mg/L`, scorev1, scorev2, scorev3, scorev4, Score8) |> 
+  setNames(c(var_names, paste0("score", c(1:4, 8)))) |> 
+  mutate(across(culture, ~ .x == "SPA" | .x == "ST"),
+         across(IgM, ~ factor2(sub("N", "0", substring(.x, 1, 1)))),
+         across(CRP, ~ factor2(sub(" *\\(.*\\).*$", "", .x), levels = crp_levels)),
+         across(c(age, fever, cough, diarrhea, vomiting, abdominal_pain, constipation,
+                  headache, pulse, platelets, ALT, starts_with("score")), as.integer),
+         across(sex, ~ factor(c("female", "male")[(.x == "1" | .x == "Male") + 1])),
+         across(c(splenomegaly, hepatomegaly),
+                ~ .x == "1" | .x == "TRUE" | .x == "Yes"))
 ```
 
 Reading and cleaning raw data from Cambodia and Bangladesh:
@@ -111,14 +104,14 @@ cambodia_bangladesh <- files[grep("camb", files)] |>
   select(culture, sex, Age, feverdays, cough, diarrhoea, vomiting, abdopain,
          constipation, headache, pulse, `temp A`, spleen, hepat, wbc, plts, alt,
          `IgM life assay d0`, `CRP Group...63`, st) |> 
-  mutate(across(c(culture, cough, diarrhoea, vomiting, abdopain, constipation,
-                  headache, spleen, hepat, ), ~ .x > 0),
+  setNames(c(var_names, "country")) |> 
+  mutate(across(-c(sex, age, fever, pulse, temperature, WBC, platelets, ALT, IgM, CRP,
+                   country), as.logical),
+         across(IgM, factor2),
+         across(CRP, ~ factor2(crp_levels[.x + 1], levels = crp_levels)),
+         across(c(fever, pulse, ALT), as.integer),
          across(sex, ~ factor(c("female", "male")[.x + 1])),
-         across(`CRP Group...63`, ~ factor2(crp_levels[.x + 1], levels = crp_levels)),
-         across(`IgM life assay d0`, factor2),
-         across(st, ~ factor(c("Cambodia", "Bangladesh")[.x])),
-         across(c(feverdays, pulse, alt), as.integer)) |> 
-  setNames(c(var_names, "country"))
+         across(country, ~ factor(c("Cambodia", "Bangladesh")[.x])))
 ```
 
 Saving to disk:
