@@ -1,0 +1,453 @@
+---
+title: "Training and testing"
+format: html
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r include = FALSE}
+knitr::opts_chunk$set(fig.retina = 2,
+                      fig.align  = "center")
+```
+
+
+## Parameters
+
+The path to the data folder:
+
+```{r}
+data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/typhoid/")
+```
+
+
+## Packages
+
+The required packages:
+
+```{r}
+required_packages <- c("dplyr", "purrr", "rsample", "yardstick", "recipes", "themis",
+                       "parsnip", "workflows", "tune", "dials", "finetune")
+```
+
+Making sure that the required packages are installed:
+
+```{r}
+to_ins <- required_packages[! required_packages %in% installed.packages()[, "Package"]]
+if (length(to_ins)) install.packages(to_ins)
+rm(required_packages, to_ins)
+```
+
+Loading some of these packages:
+
+```{r message = FALSE}
+library(dplyr)
+library(purrr)
+library(rsample)
+library(recipes)
+library(themis)
+library(parsnip)
+library(workflows)
+library(tune)
+library(finetune)
+#library(yardstick)
+#library(dials)
+
+```
+
+
+## Utilitary functions
+
+```{r}
+collect_metrics2 <- function(...) {
+  collect_metrics(...) |> 
+    select(-.config, -.estimator)
+}
+```
+
+```{r}
+set_hyperparameters <- function(x, ...) {
+  update_model(x, update(extract_spec_parsnip(x), ...))
+}
+```
+
+
+## Reading the clean data
+
+The data sets:
+
+```{r}
+nepal <- paste0(data_path, "clean_data/nepal.rds") |>
+  readRDS() |> 
+  mutate(across(c(cough, diarrhea, vomiting, abdominal_pain, constipation, headache),
+                as.logical),
+         across(c(age, platelets), as.numeric))
+```
+
+
+```{r}
+cambodia_bangladesh <- readRDS(paste0(data_path, "clean_data/cambodia_bangladesh.rds"))
+```
+
+
+## Comparing the two data sets
+
+```{r}
+show_positive_only <- function(x) x[x > 0]
+```
+
+```{r}
+nrow(nepal)
+nrow(na.exclude(nepal))
+```
+
+```{r}
+nrow(cambodia_bangladesh)
+nrow(na.exclude(cambodia_bangladesh))
+```
+
+```{r}
+nepal |> 
+  map_int(~ sum(is.na(.x))) |> 
+  show_positive_only()
+```
+
+```{r}
+cambodia_bangladesh |> 
+  map_int(~ sum(is.na(.x))) |> 
+  show_positive_only()
+```
+
+```{r}
+nepal |> 
+  pull(fever) |> 
+  min()
+```
+
+```{r}
+cambodia_bangladesh |> 
+  pull(fever) |> 
+  min()
+```
+
+```{r}
+cambodia_bangladesh2 <- filter(cambodia_bangladesh, fever > 2)
+nrow(cambodia_bangladesh2)
+```
+
+```{r}
+table(nepal$culture)
+table(cambodia_bangladesh2$culture)
+```
+
+```{r}
+lwd_val <- 4
+
+densities <- map_dfr(list(nepal, cambodia_bangladesh, cambodia_bangladesh2),
+                     ~ pull(.x, age) |>
+                       density(from = 0, na.rm = TRUE) |>
+                       with(tibble(x, y)), .id = "dataset")
+
+with(densities, plot(x, y, type = "n", xlab = "age (year)", ylab = "density"))
+densities |> 
+  mutate(color = as.numeric(dataset) + 1) |> 
+  group_by(dataset) |> 
+  group_walk(~ with(.x, lines(x, y, col = color, lwd = lwd_val)))
+legend("topright", c("Nepal", "Cambodia & Bangladesh", "Cambodia & Bangladesh 2"),
+       col = 2:4, lwd = lwd_val, bty = "n")
+```
+
+
+## Preprocessing the Cambodia and Bangladesh data
+
+```{r}
+cambodia_bangladesh2 <- cambodia_bangladesh |> 
+  select(-country) |> 
+  na.exclude() |> 
+  mutate(across(where(is.ordered), as.integer))
+
+nepal2 <- nepal |> 
+  select(-starts_with("score")) |> 
+  na.exclude() |> 
+  mutate(across(where(is.ordered), as.integer))
+
+combined_data <- bind_rows(cambodia_bangladesh2, nepal2)
+ind <- list(analysis = seq(nrow(cambodia_bangladesh2)),
+            assessment = nrow(cambodia_bangladesh2) + seq(nrow(nepal2)))
+splits <- make_splits(ind, combined_data)
+training_data <- training(splits)
+testing_data <- testing(splits)
+
+rm(cambodia_bangladesh2, nepal2)
+```
+
+
+## Random forest
+
+```{r}
+## 1. The data
+
+common_processing <- function(x) {
+  x |> 
+    mutate(across(where(is.ordered), as.integer)) |> 
+    na.exclude()
+}
+
+cambodia_bangladesh2 <- cambodia_bangladesh |> 
+  select(-country) |> 
+  common_processing()
+
+nepal2 <- nepal |> 
+  select(-starts_with("score")) |> 
+  common_processing()
+
+splits <- make_splits(list(analysis   = seq(nrow(cambodia_bangladesh2)),
+                           assessment = nrow(cambodia_bangladesh2) + seq(nrow(nepal2))),
+                      bind_rows(cambodia_bangladesh2, nepal2))
+
+training_data <- training(splits)
+
+cv_folds <- vfold_cv(training_data, repeats = 10, strata = culture)
+
+## 2. The model
+
+class_counts <- table(training_data$culture)
+weights <- setNames(as.numeric(1 / class_counts), names(class_counts))
+
+recipe0 <- recipe(culture ~ ., training_data) |> 
+  step_bin2factor(where(is.logical)) |> 
+  step_smotenc(culture)
+
+#rf_default <- rand_forest("classification", mtry  = 1, trees = 100, min_n = 30) |> 
+rf_default <- rand_forest("classification", mtry  = 4, trees = 1000, min_n = 10) |> 
+  set_engine("ranger", class.weights = weights)
+#  set_engine("ranger", importance = "permutation")
+#  set_engine("randomForest")
+
+rf_default_workflow <- workflow(recipe0, rf_default)
+
+## 3. Evaluations
+
+the_metrics <- metric_set(roc_auc, f_meas, sensitivity, specificity)
+
+a <- fit_resamples(rf_default_workflow, cv_folds, metrics = the_metrics)
+
+b <- last_fit(rf_default_workflow, splits, metrics = the_metrics)
+
+left_join(collect_metrics2(a), collect_metrics2(b), ".metric")
+```
+
+```{r}
+a |>
+  collect_metrics(summarize = FALSE) |> 
+  filter(.metric == "sensitivity") |> 
+  pull(.estimate) |> 
+  table()
+```
+
+## Logistic regression
+
+```{r}
+## 1. The data
+
+common_processing <- function(x) {
+  x |> 
+    mutate(across(where(is.ordered), as.integer)) |> 
+    na.exclude()
+}
+
+cambodia_bangladesh2 <- cambodia_bangladesh |> 
+  select(-country) |> 
+  common_processing()
+
+nepal2 <- nepal |> 
+  select(-starts_with("score")) |> 
+  common_processing()
+
+splits <- make_splits(list(analysis   = seq(nrow(cambodia_bangladesh2)),
+                           assessment = nrow(cambodia_bangladesh2) + seq(nrow(nepal2))),
+                      bind_rows(cambodia_bangladesh2, nepal2))
+
+training_data <- training(splits)
+
+cv_folds <- vfold_cv(training_data,
+#                     repeats = 10,
+                     strata = culture)
+
+## 2. The model
+
+recipe0 <- recipe(culture ~ ., training_data) |> 
+  step_bin2factor(where(is.logical)) |> 
+  step_dummy(all_factor_predictors()) |> 
+  step_smotenc(culture)
+
+lr_default <- logistic_reg("classification", "glmnet",
+                           penalty = tune(), mixture = tune())
+
+lr_default_workflow <- workflow(recipe0, lr_default)
+
+## 3. Tuning
+
+grid <- lr_default |> 
+  extract_parameter_set_dials() |> 
+  grid_space_filling(size = 100, type = "latin_hypercube")
+
+the_metric <- metric_set(roc_auc)
+system.time(a <- tune_race_anova(lr_default_workflow, cv_folds, grid, metrics = the_metric))
+best_parameters <- show_best(a, metric = "roc_auc")
+lr_default_workflow_tuned <- finalize_workflow(lr_default_workflow, best_parameters)
+final_fit <- last_fit(lr_default_workflow_tuned, splits) 
+collect_metrics(final_fit)
+
+lr_default_workflow_tuned2 <- set_hyperparameters(lr_default_workflow_tuned,
+                                                  penalty = .2)
+
+lr_default_workflow_tuned2 |>
+  fit_resamples(cv_folds) |> 
+  collect_metrics()
+
+lr_default_workflow_tuned2 |>
+  last_fit(splits) |> 
+  collect_metrics()
+```
+
+## A simple logistic regression
+
+```{r}
+cambodia_bangladesh |> 
+  select_if(is.logical) |> 
+  select(-culture, -hepatomegaly, -splenomegaly) |> 
+  na.exclude() |> 
+  cor()
+```
+
+```{r}
+vline <- function(v, ...) abline(v = v, ...)
+```
+
+```{r}
+## 1. The data ########################################################################
+
+common_processing <- function(x) {
+  x |> 
+    mutate(across(where(is.ordered), as.integer)) |> 
+    select(culture, sex, age, cough, diarrhea, vomiting, abdominal_pain, constipation,
+           headache, pulse, temperature) |> 
+#    select(culture, sex, age, cough, diarrhea, vomiting, abdominal_pain, constipation,
+#           headache) |> 
+    na.exclude()
+}
+
+cambodia_bangladesh2 <- cambodia_bangladesh |> 
+  select(-country) |> 
+  common_processing()
+
+nepal2 <- nepal |> 
+  select(-starts_with("score")) |> 
+  common_processing()
+
+splits <- make_splits(list(analysis   = seq(nrow(cambodia_bangladesh2)),
+                           assessment = nrow(cambodia_bangladesh2) + seq(nrow(nepal2))),
+                      bind_rows(cambodia_bangladesh2, nepal2))
+
+training_data <- training(splits)
+
+cv_folds <- vfold_cv(training_data,
+                     repeats = 10)#,
+#                     strata = culture)
+
+## 2. The model #######################################################################
+
+recipe0 <- recipe(culture ~ ., training_data) |> 
+#  step_discretize(all_numeric_predictors())
+  step_bin2factor(where(is.logical)) |> 
+  step_dummy(all_factor_predictors()) |> 
+  step_smotenc(culture)
+
+lr_default <- logistic_reg("classification") |> 
+  set_engine("glm")
+
+rf_default <- rand_forest("classification") |> 
+  set_engine("randomForest")
+
+default_workflow <- workflow(recipe0) |> 
+  add_model(lr_default)
+#  add_model(rf_default)
+
+## 3. Evaluation ######################################################################
+
+the_metric <- metric_set(roc_auc)
+
+testing_metric <- default_workflow |>
+  last_fit(splits, metrics = the_metric) |> 
+  collect_metrics2()
+
+cv_data <- default_workflow |>
+  fit_resamples(cv_folds, metrics = the_metric)
+
+metric_values <- cv_data |> 
+  collect_metrics2() |> 
+  left_join(testing_metric)
+```
+
+
+```{r}
+## 4. Visulation of evaluation ########################################################
+
+density_curve <- a |>
+  collect_metrics(summarize = FALSE) |> 
+  pull(.estimate) |> 
+  na.exclude() |> 
+  density(n = 2^10, from = 0, to = 1) |> 
+  with(tibble(x, y))
+
+total_area <- sum(density_curve$y)
+
+high_density_area <- function(threshold) {
+  density_curve |> 
+    filter(y > threshold) |> 
+    pull(y) |> 
+    sum() |> 
+    magrittr::divide_by(total_area)
+}
+
+ci2y <- function(ci) {
+  optimize(function(x) abs(high_density_area(x) - ci), c(0, max(density_curve$y)))$min
+}
+
+color <- 4
+ci_vals <- seq(.05, .95, .05)
+alpha <- 1 / (length(ci_vals) + 1)
+polygon2 <- function(...) polygon(..., border = NA, col = adjustcolor(color, alpha))
+
+with(density_curve, {
+  x2 <- c(0, x, 1) 
+  y2 <- c(0, y, 0)
+  plot(x2, y2, type = "l", col = color, xlab = "ROC AUC", ylab = "density")
+  polygon2(x2, y2)
+})
+
+ci_vals |>
+  map_dbl(ci2y) |> 
+  map(~ filter(density_curve, y > .x)) |> 
+  rev() |> 
+  walk(~ with(.x, polygon2(c(x[1], x, tail(x, 1)), c(0, y, 0))))
+
+metric_values |> 
+  pull(.estimate) |> 
+  vline(col = 2, lwd = 3)
+```
+
+```{r}
+default_workflow |>
+  last_fit(splits, metrics = the_metric) |> 
+  collect_predictions() |> 
+  roc_curve(culture, .pred_no)
+
+cv_data |> 
+  collect_predictions() |> 
+  roc_curve(culture, .pred_no)
+```
+
