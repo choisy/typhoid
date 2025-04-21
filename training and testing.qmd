@@ -7,7 +7,15 @@ editor_options:
 ---
 
 ```{r include = FALSE}
-knitr::opts_chunk$set(fig.retina = 2,
+knitr::knit_hooks$set(
+  margin = function(before, options, envir) {
+    if (before) par(mgp = c(1.5, .5, 0), bty = "n",
+                    plt = c(.105, .97, .13, .97))
+    else NULL
+  })
+
+knitr::opts_chunk$set(margin     = TRUE,
+                      fig.retina = 2,
                       fig.align  = "center")
 ```
 
@@ -17,7 +25,7 @@ knitr::opts_chunk$set(fig.retina = 2,
 The path to the data folder:
 
 ```{r}
-data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
+data_path <- paste0(Sys.getenv("HOME"), "/Library/CloudStorage/",
                     "OneDrive-OxfordUniversityClinicalResearchUnit/",
                     "GitHub/choisy/typhoid/")
 ```
@@ -29,7 +37,8 @@ The required packages:
 
 ```{r}
 required_packages <- c("dplyr", "purrr", "rsample", "yardstick", "recipes", "themis",
-                       "parsnip", "workflows", "tune", "finetune", "magrittr")
+                       "parsnip", "workflows", "tune", "finetune", "magrittr",
+                       "randomForest", "glmnet")
 ```
 
 Making sure that the required packages are installed:
@@ -82,6 +91,55 @@ collect_metrics2 <- function(...) {
   collect_metrics(...) |> 
     select(-.config, -.estimator)
 }
+```
+
+```{r}
+high_density_area <- function(density_curve, threshold) {
+  density_curve |> 
+    filter(y > threshold) |> 
+    pull(y) |> 
+    sum() |> 
+    divide_by(sum(density_curve$y))
+}
+```
+
+```{r}
+ci2y <- function(ci, density_curve) {
+  optimize(function(x) abs(high_density_area(density_curve, x) - ci),
+           c(0, max(density_curve$y)))$min
+}
+```
+
+```{r}
+hdi_ci <- function(x, ci) {
+  density_curve <- density_data_frame(x)
+  density_curve |> 
+    filter(y > ci2y(ci, density_curve)) |> 
+    pull(x) |> 
+    range()
+}
+```
+
+```{r}
+density2 <- function(...) density(..., n = 2^10, from = 0, to = 1)
+```
+
+```{r}
+density_data_frame <- function(xs) {
+  xs |>
+    density2() |> 
+    with(tibble(x, y))
+}
+```
+
+```{r}
+polygon2 <- function(x, y1, y2, ...) {
+  polygon(c(x, rev(x)), c(y1, rev(y2)), border = NA, ...)
+}
+```
+
+```{r}
+legend2 <- function(...) legend(..., bty = "n")
 ```
 
 Not used yet:
@@ -196,6 +254,8 @@ legend("topright", c("Nepal", "Cambodia & Bangladesh", "Cambodia & Bangladesh 2"
        col = 2:4, lwd = lwd_val, bty = "n")
 ```
 
+Looking at the colinearity between the binary covariables:
+
 ```{r}
 cambodia_bangladesh |> 
   select(cough, diarrhea, vomiting, abdominal_pain, constipation, headache) |> 
@@ -208,11 +268,12 @@ cambodia_bangladesh |>
 ## A simple non-tuned pipeline
 
 ```{r}
-pipeline <- function(data_preprocessing, model) {
+pipeline <- function(data_preprocessing, model, v = 10, repeats = 1,
+                     times = NULL, ...) {
 ## 1. Data preprocessing ##############################################################
 
-  cambodia_bangladesh <- common_processing(cambodia_bangladesh)
-  nepal <- common_processing(nepal)
+  cambodia_bangladesh <- data_preprocessing(cambodia_bangladesh)
+  nepal <- data_preprocessing(nepal)
   
   splits <- make_splits(list(analysis   = seq(nrow(cambodia_bangladesh)),
                              assessment = nrow(cambodia_bangladesh) + seq(nrow(nepal))),
@@ -240,20 +301,24 @@ pipeline <- function(data_preprocessing, model) {
     collect_metrics2()
   
   cv_resamples <- the_workflow |>
-    fit_resamples(vfold_cv(training_data, repeats = 50),
+    fit_resamples(vfold_cv(training_data, v, repeats, ...),
                   metrics = the_metric,
                   control = control_resamples(save_pred = TRUE))
-   
+
+  cv_values <- cv_resamples |> 
+         collect_metrics(summarize = FALSE) |> 
+         pull(.estimate) |> 
+         na.exclude()
+  
+  fitted_model <- fit(the_workflow, training_data)
+  
   list(mean_metric_values = cv_resamples |> 
          collect_metrics2() |> 
          left_join(testing_metric, ".metric"),
-       cv_values = cv_resamples |> 
-         collect_metrics(summarize = FALSE) |> 
-         pull(.estimate) |> 
-         na.exclude(),
+       cv_values = cv_values,
        bootstrap_values = splits |> 
          testing() |>
-         bootstraps(500) |> 
+         bootstraps(ifelse(is.null(times), length(cv_values), times)) |> 
          extract2("splits") |> 
          map(as_tibble) |> 
          map_dbl(~ augment(fitted_model, .x) |> 
@@ -264,20 +329,6 @@ pipeline <- function(data_preprocessing, model) {
 
 ```{r}
 add_distribution <- function(density_curve, color = 4, ci_vals = seq(.05, .95, .05)) {
-  total_area <- sum(density_curve$y)
-
-  high_density_area <- function(threshold) {
-    density_curve |> 
-      filter(y > threshold) |> 
-      pull(y) |> 
-      sum() |> 
-      divide_by(total_area)
-  }
-  
-  ci2y <- function(ci) {
-    optimize(function(x) abs(high_density_area(x) - ci), c(0, max(density_curve$y)))$min
-  }
-  
   alpha <- 1 / (length(ci_vals) + 1)
   polygon2 <- function(...) polygon(..., border = NA, col = adjustcolor(color, alpha))
   
@@ -289,18 +340,10 @@ add_distribution <- function(density_curve, color = 4, ci_vals = seq(.05, .95, .
   })
   
   ci_vals |>
-    map_dbl(ci2y) |> 
+    map_dbl(ci2y, density_curve) |> 
     map(~ filter(density_curve, y > .x)) |> 
     rev() |> 
     walk(~ with(.x, polygon2(c(x[1], x, tail(x, 1)), c(0, y, 0))))
-}
-```
-
-```{r}
-density_data_frame <- function(xs) {
-  xs |>
-    density(n = 2^10, from = 0, to = 1) |> 
-    with(tibble(x, y))
 }
 ```
 
@@ -310,31 +353,48 @@ plot_outline <- function(...)  {
 }
 ```
 
-Computing (takes 48"):
 
-```{r eval = FALSE}
-out_logistic_reg <- pipeline(function(x) {
-  x |> 
-    select(culture, sex, age, cough, diarrhea, vomiting, abdominal_pain,
-           constipation, headache, pulse, temperature) |> 
-    na.exclude()
-  }, "logistic_reg")
+### Logistic regression
+
+Computing (takes 18"):
+
+```{r cache1, eval = FALSE}
+out_logistic_reg <- pipeline(
+  function(x) {
+    x |> 
+      select(culture, sex, age, cough, diarrhea, vomiting, abdominal_pain,
+             constipation, headache, pulse, temperature) |> 
+      na.exclude()
+  },
+  "logistic_reg",
+  repeats = 50)
 ```
 
 ```{r include = FALSE}
 if (file_exists("out_logistic_reg.rds")) {
   out_logistic_reg <- readRDS2("out_logistic_reg.rds")
 } else {
-  out_logistic_reg <- pipeline(function(x) {
-    x |> 
-      select(culture, sex, age, cough, diarrhea, vomiting, abdominal_pain,
-             constipation, headache, pulse, temperature) |> 
-      na.exclude()
-    }, "logistic_reg")
+  out_logistic_reg <- pipeline(
+    function(x) {
+      x |> 
+        select(culture, sex, age, cough, diarrhea, vomiting, abdominal_pain,
+               constipation, headache, pulse, temperature) |> 
+        na.exclude()
+    },
+    "logistic_reg",
+    repeats = 50)
   saveRDS2(out_logistic_reg, "out_logistic_reg.rds")
 }
 ```
 
+```{r}
+add_mean_test <- function(x) {
+  x |>
+    extract2("mean_metric_values") |>
+    pull(.estimate) |>
+    vline(col = 2, lwd = 3)
+}
+```
 
 Visualisation of the ROC AUC on the cross-validated training dataset:
 
@@ -345,31 +405,283 @@ density_curve_training <- out_logistic_reg |>
 
 plot_outline(ylim = c(0, max(density_curve_training$y)))
 add_distribution(density_curve_training)
+add_mean_test(out_logistic_reg)
+```
 
-out_logistic_reg |>
-  extract2("mean_metric_values") |>
-  pull(.estimate) |> 
-  vline(col = 2, lwd = 3)
+Training different values of k (takes 4'43"):
+
+```{r cache2, eval = FALSE}
+k_vals <- 2:16
+out_logistic_reg_ks <- map2(
+  k_vals,
+  round(512 / k_vals),
+  function(.x, .y) pipeline(
+      function(x) {
+        x |> 
+          select(culture, sex, age, cough, diarrhea, vomiting, abdominal_pain,
+                 constipation, headache, pulse, temperature) |> 
+          na.exclude()
+      },
+      "logistic_reg",
+      v = .x,
+      repeats = .y))
+```
+
+```{r include = FALSE}
+k_vals <- 2:16
+if (file_exists("out_logistic_reg.rds")) {
+  out_logistic_reg_ks <- readRDS2("out_logistic_reg_ks.rds")
+} else {
+  out_logistic_reg_ks <- map2(
+    k_vals,
+    round(512 / k_vals),
+    function(.x, .y) pipeline(
+        function(x) {
+          x |> 
+            select(culture, sex, age, cough, diarrhea, vomiting, abdominal_pain,
+                   constipation, headache, pulse, temperature) |> 
+            na.exclude()
+        },
+        "logistic_reg",
+        v = .x,
+        repeats = .y))
+  saveRDS2(out_logistic_reg_ks, "out_logistic_reg_ks.rds")
+}
+```
+
+```{r}
+k_effect_roc_auc <- function(x, lwdv = 2) {
+  colors <- rainbow(length(x))
+  x_df <- map(x, ~ density_data_frame(.x$cv_values))
+
+  ymax <- x_df |> 
+    map(extract2, "y") |> 
+    unlist() |> 
+    max()
+  
+  plot_outline(ylim = c(0, ymax))
+  
+  walk2(x_df, colors, ~ with(.x, lines(x, y, col = .y, lwd = lwdv)))
+  legend2("topleft", legend = paste("k =", k_vals), col = colors, lwd = lwdv)
+}
+
+k_effect_roc_auc(out_logistic_reg_ks)
+```
+
+```{r}
+calc_mean_ci <- function(x) {
+  cv_values_logistic_reg_ks <- map(x, extract2, "cv_values")
+  list(cv_values_logistic_reg_ks_mean = map_dbl(cv_values_logistic_reg_ks, mean),
+       cv_values_logistic_reg_ks_ci = cv_values_logistic_reg_ks |> 
+         map(hdi_ci, .95) |> 
+         map(setNames, c("low", "high")) |> 
+         map_dfr(tibble::as_tibble_row))
+}
+```
+
+```{r}
+lines2 <- function(..., lwd = lwd) lines(..., type = "o", lwd = lwd)
+```
+
+```{r}
+k_effect_roc_auc_range <- function(x, lwdv = 2) {
+  color <- 4
+  with(calc_mean_ci(x), {
+    plot(NA, xlim = range(k_vals), ylim = 0:1, xlab = "k", ylab = "ROC AUC")
+    polygon2(k_vals,
+             cv_values_logistic_reg_ks_ci$low,
+             cv_values_logistic_reg_ks_ci$high, col = adjustcolor(color, .2))
+    walk(c(cv_values_logistic_reg_ks_ci, list(cv_values_logistic_reg_ks_mean)),
+         ~ lines2(k_vals, .x, col = color, lwd = lwdv))
+  })
+}
+
+k_effect_roc_auc_range(out_logistic_reg_ks)
+```
+
+```{r}
+k_effect_roc_auc_mean_range <- function(x, lwdv = 2) {
+  colors <- c(2, 4)
+  with(calc_mean_ci(x), {
+    roc_auc_range <- with(cv_values_logistic_reg_ks_ci, high - low)
+    plot(rep(k_vals, 2), c(cv_values_logistic_reg_ks_mean, roc_auc_range),
+         xlab = "k", ylab = "ROC AUC", type = "n")
+    walk2(list(cv_values_logistic_reg_ks_mean, roc_auc_range), colors,
+          ~ lines2(k_vals, .x, col = .y, lwd = lwdv))
+  })
+  legend2("right", legend = c("mean ROC AUC", "ROC AUC 95% CI range"),
+            col = colors, lwd = lwdv)
+}
+
+k_effect_roc_auc_mean_range(out_logistic_reg_ks)
 ```
 
 Visualisation of the ROC AUC on the cross-validated training dataset and the
 bootstrapped testing dataset:
 
 ```{r}
-density_curve_testing <- out_logistic_reg |> 
-  extract2("bootstrap_values") |> 
-  density_data_frame()
-  
-plot_outline(ylim = c(0, max(max(density_curve_training$y),
-                             max(density_curve_testing$y))))
-add_distribution(density_curve_training)
-add_distribution(density_curve_testing, 2)
+plot_training_and_testing <- function(x, ...) {
+  density_curve_training <- x |> 
+    extract2("cv_values") |> 
+    density_data_frame()
 
-out_logistic_reg |>                    ## MAKE
-  extract2("mean_metric_values") |>    ## A
-  pull(.estimate) |>                   ## FUNCTION
-  vline(col = 2, lwd = 3)              ##
+  density_curve_testing <- x |> 
+    extract2("bootstrap_values") |> 
+    density_data_frame()
+
+  plot_outline(ylim = c(0, max(max(density_curve_training$y),
+                               max(density_curve_testing$y))), ...)
+  add_distribution(density_curve_training) ###
+  add_distribution(density_curve_testing, 2)
+  add_mean_test(x)
+}
 ```
+
+```{r}
+plot_training_and_testing(out_logistic_reg)
+```
+
+With $k = 2$:
+
+```{r}
+plot_training_and_testing(out_logistic_reg_ks[[1]])
+```
+
+
+### Random forest
+
+Let's look at random forest (takes 40'):
+
+```{r cache3, eval = FALSE}
+out_random_forest_ks <- map2(
+  k_vals,
+  round(512 / k_vals),
+  function(.x, .y) pipeline(
+      function(x) {
+        x |> 
+          select(culture, sex, age, cough, diarrhea, vomiting, abdominal_pain,
+                 constipation, headache, pulse, temperature) |> 
+          na.exclude()
+      },
+      "randomForest",
+      v = .x,
+      repeats = .y))
+```
+
+```{r include = FALSE}
+if (file_exists("out_logistic_reg.rds")) {
+  out_random_forest_ks <- readRDS2("out_random_forest_ks.rds")
+} else {
+  out_random_forest_ks <- map2(
+  k_vals,
+  round(512 / k_vals),
+  function(.x, .y) pipeline(
+      function(x) {
+        x |> 
+          select(culture, sex, age, cough, diarrhea, vomiting, abdominal_pain,
+                 constipation, headache, pulse, temperature) |> 
+          na.exclude()
+      },
+      "randomForest",
+      v = .x,
+      repeats = .y))
+  saveRDS2(out_random_forest_ks, "out_random_forest_ks.rds")
+}
+```
+
+```{r}
+walk(list(k_effect_roc_auc, k_effect_roc_auc_range, k_effect_roc_auc_mean_range),
+     ~ .x(out_random_forest_ks))
+```
+
+```{r}
+opar <- par(mfrow = 1:2, plt = c(.15, .97, .13, .85))
+plot_training_and_testing(out_logistic_reg_ks[[1]], main = "logistic regression")
+plot_training_and_testing(out_random_forest_ks[[1]], main = "random forest")
+par(opar)
+```
+
+
+## ElastiNet logistic regression
+
+Data preprocessing:
+
+```{r}
+data_preprocessing <- function(x) {
+  x |> 
+    select(culture, sex, age, cough, diarrhea, vomiting, abdominal_pain,
+           constipation, headache, pulse, temperature) |> 
+    na.exclude()
+}
+
+cambodia_bangladesh <- data_preprocessing(cambodia_bangladesh)
+nepal <- data_preprocessing(nepal)
+
+splits <- make_splits(list(analysis   = seq(nrow(cambodia_bangladesh)),
+                           assessment = nrow(cambodia_bangladesh) + seq(nrow(nepal))),
+                      bind_rows(cambodia_bangladesh, nepal))
+
+training_data <- training(splits)
+```
+
+ElasticNet model:
+
+```{r}
+the_recipe <- recipe(culture ~ ., training_data) |> 
+  step_dummy(all_factor_predictors()) |> 
+  step_smotenc(culture)
+
+the_model <- logistic_reg("classification", "glmnet",
+                          penalty = tune(), mixture = tune())
+
+the_workflow <- workflow(the_recipe, the_model)
+```
+
+Tuning:
+
+```{r}
+the_metric <- metric_set(roc_auc)
+```
+
+
+
+
+```{r}
+  
+  
+  testing_metric <- the_workflow |>
+    last_fit(splits, metrics = the_metric) |> 
+    collect_metrics2()
+  
+  cv_resamples <- the_workflow |>
+    fit_resamples(vfold_cv(training_data, v, repeats, ...),
+                  metrics = the_metric,
+                  control = control_resamples(save_pred = TRUE))
+
+  cv_values <- cv_resamples |> 
+         collect_metrics(summarize = FALSE) |> 
+         pull(.estimate) |> 
+         na.exclude()
+  
+  fitted_model <- fit(the_workflow, training_data)
+  
+  list(mean_metric_values = cv_resamples |> 
+         collect_metrics2() |> 
+         left_join(testing_metric, ".metric"),
+       cv_values = cv_values,
+       bootstrap_values = splits |> 
+         testing() |>
+         bootstraps(ifelse(is.null(times), length(cv_values), times)) |> 
+         extract2("splits") |> 
+         map(as_tibble) |> 
+         map_dbl(~ augment(fitted_model, .x) |> 
+                   roc_auc(truth = culture, .pred_FALSE) |>
+                   pull(.estimate)))
+}
+```
+
+
+## Next steps
 
 Next:
 
@@ -377,12 +689,6 @@ Next:
 * Feature importance
 * Interpretation (in particular with continuous variables)
 * Clinical score
-
-
-
-
-
-
 
 
 The ROC curve:
