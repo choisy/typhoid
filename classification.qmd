@@ -1,0 +1,350 @@
+---
+title: "Logistic regression"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r include = FALSE}
+knitr::knit_hooks$set(
+  margin = function(before, options, envir) {
+    if (before) par(mgp = c(1.5, .5, 0), bty = "n",
+                    plt = c(.105, .97, .13, .97))
+    else NULL
+  })
+
+knitr::opts_chunk$set(margin     = TRUE,
+                      fig.retina = 2,
+                      fig.align  = "center")
+```
+
+
+## Limitations and suggestions
+
+Limitations:
+
+-   Small datasets
+-   One of the datasets has very low prevalence 6%
+-   The fever variable is different in the two datasets
+-   We are trying to predict the result of culture when we do know that it depends on other causes that those in our variables (i.e. the quantity of blood used)
+-   The durations of symptoms are questionable has it depends on the stage of the disease at which the patient sees the doctor
+
+Suggestions:
+
+-   Switch the role of the 2 datasets in terms of training and testing
+-   Proceed in 2 steps: first build the best possible model that will used as a performance reference. Then build a clinical score and measure its performance by comparing with the best possible model
+
+## Global parameters
+
+```{r}
+data_path <- paste0(Sys.getenv("HOME"), "/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/typhoid/")
+```
+
+## Package
+
+```{r message = FALSE}
+library(dplyr)
+library(purrr)
+library(rsample)
+library(recipes)
+library(themis)
+library(parsnip)
+library(workflows)
+library(yardstick)
+library(tune)
+library(finetune)
+library(dials)
+```
+
+## Utilitary functions
+
+Functions for caching long simulations results:
+
+```{r}
+file_exists <- function(x) file.exists(paste0(data_path, "cache/", x))
+readRDS2 <- function(x) readRDS(paste0(data_path, "cache/", x))
+saveRDS2 <- function(object, file) saveRDS(object, paste0(data_path, "cache/", file))
+```
+
+A function that transforms a logical vector into a factor vector (with the correct number of levels):
+
+```{r}
+logical2factor <- function(x) factor(x, c("FALSE", "TRUE"))
+```
+
+This function builds an `rsplit` object by combining independent train and test data sets:
+
+```{r}
+make_splits2 <- function(train, test) {
+  make_splits(list(analysis   = seq(nrow(train)),
+                   assessment = nrow(train) + seq(nrow(test))),
+              bind_rows(train, test))
+}
+```
+
+Tuning the `collect_metrics()` function:
+
+```{r}
+collect_metrics2 <- function(...) {
+  collect_metrics(...) |> 
+    select(-.config, -.estimator)
+}
+```
+
+Tuning the `last_fit()` function:
+
+```{r}
+last_fit2 <- function(wf, split, metrics) {
+  tmp <- wf |> 
+    last_fit(split, metrics = metrics) |> 
+    collect_metrics2() |> 
+    select(-.metric)
+    
+  wf |>
+    fit_resamples(vfold_cv(training(split)), metrics = metrics) |> 
+    collect_metrics2() |> 
+    bind_cols(tmp)
+}
+```
+
+## Reading the clean data
+
+The Nepal dataset:
+
+```{r}
+nepal <- paste0(data_path, "clean_data/nepal.rds") |>
+  readRDS() |> 
+  mutate(across(c(cough, diarrhea, vomiting, abdominal_pain, constipation, headache),
+                as.logical),
+         across(c(age, platelets), as.numeric),
+         across(fever, ~ .x > 2),
+         across(where(is.logical), logical2factor)) |> 
+  select(-starts_with("score")) |> 
+  select(-fever) |> 
+  na.exclude()
+```
+
+The Cambodia and Bangladesh dataset:
+
+```{r}
+cambodia_bangladesh <- paste0(data_path, "clean_data/cambodia_bangladesh.rds") |>
+  readRDS() |> 
+  mutate(across(fever, ~ .x > 2),
+         across(where(is.logical), logical2factor)) |> 
+  select(-country) |> 
+  select(-fever) |> 
+  na.exclude()
+```
+
+Checking the consistency of the levels of the factors between the two datasets:
+
+```{r}
+levels_nepal <- nepal |> 
+  select(sex, IgM, CRP) |> 
+  map(levels)
+
+levels_cambodia_bangladesh <- cambodia_bangladesh |> 
+  select(sex, IgM, CRP) |> 
+  map(levels)
+
+identical(levels_nepal, levels_cambodia_bangladesh)
+rm(levels_nepal, levels_cambodia_bangladesh)
+```
+
+## The metric
+
+We use the ROC AUC to measure the performance of the models:
+
+```{r}
+the_metric <- metric_set(roc_auc)
+```
+
+## The data splits
+
+Let's consider the two of the two data sets:
+
+```{r}
+splits1 <- make_splits2(cambodia_bangladesh, nepal)
+splits2 <- make_splits2(nepal, cambodia_bangladesh)
+```
+
+## The models
+
+Let's consider 5 types of models:
+
+```{r}
+logistic_regression <- logistic_reg("classification", "glm")
+logistic_regression_lasso <- logistic_reg("classification", "glmnet",
+                                          penalty = tune())
+logistic_regression_elasticnet <- logistic_reg("classification", "glmnet",
+                                               penalty = tune(), mixture = tune())
+random_forest <- rand_forest("classification", "randomForest")
+random_forest_tuned <- rand_forest("classification", "randomForest",
+                                   mtry = tune(), trees = tune(), min_n = tune())
+```
+
+## Functions to tune workflow
+
+The function that tunes 1 model:
+
+```{r}
+workflow_tune <- function(model, split, size = 25, metric = the_metric,
+                          mtry_range = c(1, 10)) {
+  check_mtry <- function(x) {
+    if (x$component[1] == "rand_forest") {
+      if (any(map_chr(x$object[[1]]$range, class) == "call")) {
+        return(update(x, mtry = mtry(mtry_range)))
+      }
+    }
+    x
+  }
+  
+  training_data <- training(split)
+  
+  wkflw <- recipe(culture ~ ., training_data) |>
+    step_unorder(all_ordered_predictors()) |> 
+    step_dummy(all_factor_predictors()) |> 
+    step_smotenc(culture) |> 
+    workflow(model)
+  
+  grid <- wkflw |> 
+    extract_parameter_set_dials() |> 
+    check_mtry() |> 
+    grid_space_filling(size = size)
+  
+  resamples <- vfold_cv(training_data)
+
+  grid_search <- wkflw |>
+    tune_grid(resamples = resamples, grid = grid, metrics = metric)
+    
+  iterative_search <- wkflw |>
+    safely(tune_bayes)(resamples = resamples, initial = grid_search, metrics = metric)
+  
+  select_best2 <- function(...)
+    select_best(..., metric = names(attributes(metric)$metrics))
+  
+  output <- list(grid_search = finalize_workflow(wkflw, select_best2(grid_search)))
+  if (is.null(iterative_search$result)) {
+    return(output)
+  } else {
+    output$iterative_search <- finalize_workflow(wkflw,
+                                                 select_best2(iterative_search$result))
+  }
+  output
+}
+```
+
+```{r}
+#workflow_tune(logistic_regression_lasso, splits1)
+```
+
+
+A wrapper around the above function to tune several models at once:
+
+```{r}
+workflows_tune <- function(models, split, size = 25, metric = the_metric,
+                           mtry_range = c(1, 10)) {
+  models |> 
+    map(workflow_tune, split, size, metric, mtry_range) |> 
+    unlist(FALSE) |> 
+    unname()
+}
+
+```
+
+
+## Function that makes workflows without tuning
+
+```{r}
+workflow_no_tune <- function(model, splits) {
+  recipe(culture ~ ., training(splits)) |>
+    step_dummy(all_factor_predictors()) |> 
+    step_smotenc(culture) |> 
+    workflow(model)
+}
+```
+
+## Models comparisons
+
+Making all the workflows:
+
+```{r}
+make_workflows <- function(splits) {
+  non_tuned_workflows <- map(list(logistic_regression, random_forest),
+                             workflow_no_tune, splits)
+  
+  tuned_workflows <- workflows_tune(list(logistic_regression_elasticnet,
+                                         logistic_regression_lasso, random_forest_tuned),
+                                    splits)
+  
+  list(non_tuned_workflows, tuned_workflows) |> 
+    unlist(FALSE)
+}
+```
+
+Takes 6'50":
+
+```{r eval = FALSE}
+workflows <- map(list(splits1, splits2), make_workflows)
+```
+
+```{r include = FALSE}
+if (file_exists("workflows.rds")) {
+  workflows <- readRDS2("workflows.rds")
+} else {
+  workflows <- map(list(splits1, splits2), make_workflows)
+  saveRDS2(workflows, "workflows.rds")
+}
+```
+
+Takes 44":
+
+```{r eval = FALSE}
+workflows_performances <- map2(workflows, list(splits1, splits2),
+                               ~ map(.x, last_fit2, .y, the_metric)) |> bind_rows()
+```
+
+```{r include = FALSE}
+if (file_exists("workflows_performances.rds")) {
+  workflows_performances <- readRDS2("workflows_performances.rds")
+} else {
+  workflows_performances <- map2(workflows0,
+                                 list(splits1, splits2),
+                                 ~ .x |>
+                                   unlist(FALSE) |>
+                                   map(last_fit2, .y, the_metric)) |> bind_rows()
+  saveRDS2(workflows_performances, "workflows_performances.rds")
+}
+```
+
+```{r}
+workflows_performances
+```
+
+```{r}
+opar <- par(pty = "s")
+with(workflows_performances, {
+  min_val <- min(mean, .estimate)
+  plot(mean, .estimate, col = rep(c(2, 4), each = 8), cex = 2,
+       xlim = c(min_val, 1), ylim = c(min_val, 1),
+       xlab = "mean training internal cross-validation", ylab = "testing dataset")
+})
+abline(0, 1)
+box(bty = "o")
+par(opar)
+```
+
+```{r}
+opar <- par(pty = "s")
+with(workflows_performances,
+     plot(mean, .estimate, col = rep(c(2, 4), each = 8), cex = 2,
+          xlim = 0:1, ylim = 0:1,
+          xlab = "mean training internal cross-validation", ylab = "testing dataset"))
+abline(0, 1)
+box(bty = "o")
+par(opar)
+```
+

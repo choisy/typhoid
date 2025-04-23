@@ -646,9 +646,7 @@ the_metric <- metric_set(roc_auc)
 
 
 
-```{r}
-  
-  
+```{r eval = FALSE, include = FALSE}
   testing_metric <- the_workflow |>
     last_fit(splits, metrics = the_metric) |> 
     collect_metrics2()

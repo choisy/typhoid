@@ -1,0 +1,168 @@
+---
+title: "Logistic regression"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Global parameters
+
+```{r}
+data_path <- paste0(Sys.getenv("HOME"), "/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/typhoid/")
+```
+
+## Package
+
+```{r message=FALSE}
+library(dplyr)
+library(purrr)
+library(rsample)
+library(parsnip)
+library(recipes)
+library(workflows)
+library(yardstick)
+```
+
+
+## Utilitary functions
+
+
+```{r}
+logical2factor <- function(x) factor(x, c("FALSE", "TRUE"))
+```
+
+
+## Reading the clean data
+
+The Nepal dataset:
+
+```{r}
+nepal <- paste0(data_path, "clean_data/nepal.rds") |>
+  readRDS() |> 
+  mutate(across(c(cough, diarrhea, vomiting, abdominal_pain, constipation, headache),
+                as.logical),
+         across(c(age, platelets), as.numeric),
+         across(where(is.logical), logical2factor)) |> 
+  select(-starts_with("score"))
+```
+
+The Cambodia and Bangladesh dataset:
+
+```{r}
+cambodia_bangladesh <- paste0(data_path, "clean_data/cambodia_bangladesh.rds") |>
+  readRDS() |> 
+  mutate(across(where(is.logical), logical2factor)) |> 
+  select(-country)
+```
+
+Checking the consistency of the levels of the factors between the two datasets:
+
+```{r}
+levels_nepal <- nepal |> 
+  select(sex, IgM, CRP) |> 
+  map(levels)
+
+levels_cambodia_bangladesh <- cambodia_bangladesh |> 
+  select(sex, IgM, CRP) |> 
+  map(levels)
+
+identical(levels_nepal, levels_cambodia_bangladesh)
+rm(levels_nepal, levels_cambodia_bangladesh)
+```
+
+## Logistic regression
+
+```{r}
+logistic_regression <- glm(culture ~ ., binomial, nepal)
+```
+
+```{r}
+summary(logistic_regression)
+```
+
+```{r}
+logistic_regression
+```
+
+```{r}
+round(coef(logistic_regression))
+```
+
+## Tidymodels
+
+```{r}
+data_splits <- initial_split(nepal)
+training_data <- training(data_splits)
+testing_data <- testing(data_splits)
+```
+
+```{r}
+model <- logistic_reg() |> 
+  set_engine("glm") |> 
+  set_mode("classification")
+```
+
+```{r}
+model <- logistic_reg("classification", "glm")
+```
+
+```{r}
+the_recipe <- recipe(culture ~ ., training_data)
+```
+
+```{r}
+the_workflow <- workflow(the_recipe, model)
+```
+
+```{r}
+fitted_model <- fit(the_workflow, training_data)
+```
+
+```{r}
+predict(fitted_model, testing_data)
+```
+
+```{r}
+augment(fitted_model, testing_data) |> 
+  conf_mat(truth = culture, estimate = .pred_class) |> 
+  autoplot(type = "heatmap")
+```
+
+```{r}
+augment(fitted_model, testing_data) |> 
+  accuracy(truth = culture, estimate = .pred_class)
+```
+
+```{r}
+augment(fitted_model, testing_data) |> 
+  sensitivity(truth = culture, estimate = .pred_class)
+```
+
+```{r}
+augment(fitted_model, testing_data) |> 
+  specificity(truth = culture, estimate = .pred_class)
+```
+
+```{r}
+augment(fitted_model, testing_data) |> 
+  roc_curve(truth = culture, .pred_FALSE)
+```
+
+```{r}
+augment(fitted_model, testing_data) |> 
+  roc_curve(truth = culture, .pred_FALSE) |> 
+  autoplot()
+```
+
+```{r}
+augment(fitted_model, testing_data) |> 
+  roc_auc(truth = culture, .pred_FALSE)
+```
+
+```{r}
+last_fit()
+```
+
