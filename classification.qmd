@@ -21,7 +21,6 @@ knitr::opts_chunk$set(margin     = TRUE,
                       fig.align  = "center")
 ```
 
-
 ## Limitations and suggestions
 
 Limitations:
@@ -243,7 +242,6 @@ workflow_tune <- function(model, split, size = 25, metric = the_metric,
 #workflow_tune(logistic_regression_lasso, splits1)
 ```
 
-
 A wrapper around the above function to tune several models at once:
 
 ```{r}
@@ -256,7 +254,6 @@ workflows_tune <- function(models, split, size = 25, metric = the_metric,
 }
 
 ```
-
 
 ## Function that makes workflows without tuning
 
@@ -349,4 +346,3 @@ abline(0, 1)
 box(bty = "o")
 par(opar)
 ```
-
