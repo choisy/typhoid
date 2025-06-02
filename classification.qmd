@@ -385,4 +385,86 @@ par(opar)
 ```
 
 
+## Blood volume
+
+```{r}
+volumes_bangladesh <- readxl::read_excel(paste0(data_path,
+                                                "raw_data/bangladesh_BC_volumes.xlsx")) |> 
+  select(BC_Vol, BC_result) |> 
+  mutate(across(BC_result, ~ .x == "Pos"))
+
+volumes_cambodia <- readxl::read_excel(paste0(data_path,
+                                              "raw_data/cambodia_BC_volumes.xlsx"))
+```
+
+```{r}
+hist(volumes_bangladesh$BC_Vol)
+```
+
+```{r}
+table(volumes_bangladesh$BC_result)
+```
+
+```{r}
+with(volumes_bangladesh, plot(jitter(as.numeric(BC_result)), BC_Vol))
+```
+
+```{r}
+volumes_bangladesh |> 
+  filter(BC_result) |> 
+  pull(BC_Vol) |> 
+  density(from = 0) |> 
+  plot(xlim = c(0, 20), ylim = c(0, .15), main = NA, axes = FALSE, ann = FALSE,
+       col = 2, lwd = 2)
+
+par(new = TRUE)
+
+volumes_bangladesh |> 
+  filter(! BC_result) |> 
+  pull(BC_Vol) |> 
+  density(from = 0) |> 
+  plot(xlim = c(0, 20), ylim = c(0, .15), col = 4, lwd = 2, main = NA)
+
+abline(v = 3.45)
+```
+
+```{r}
+volumes_bangladesh |> 
+  pull(BC_Vol) |> 
+  na.exclude() |> 
+  density(from = 0) |> 
+  plot(xlim = c(0, 20), ylim = c(0, .15), col = 3, lwd = 2, main = NA)
+
+abline(v = 3.45)
+```
+
+```{r}
+rpart::rpart(BC_result ~ BC_Vol, volumes_bangladesh)
+```
+
+```{r}
+f <- function(x) {
+  volumes_bangladesh |> 
+    filter(BC_Vol < x) |> 
+    pull(BC_result) |> 
+    mean()
+}
+
+xs <- seq(1, 15, .1)
+plot(xs, map_dbl(xs, f), type = "l")
+```
+
+```{r}
+volumes_bangladesh |> 
+  arrange(BC_Vol)
+```
+
+```{r}
+mod <- glm(BC_result ~ BC_Vol, binomial, volumes_bangladesh)
+xs <- seq(0, 15, le = 512)
+pred <- predict(mod, data.frame(BC_Vol = xs), type = "response", se = TRUE)
+plot(xs, pred$fit, type = "l", ylim = c(0, .3))
+lines(xs, pred$fit - 1.96 * pred$se.fit, lty = 2)
+lines(xs, pred$fit + 1.96 * pred$se.fit, lty = 2)
+```
 
