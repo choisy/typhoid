@@ -38,13 +38,40 @@ Suggestions:
 
 ## Global parameters
 
+The path to the data:
+
 ```{r}
 data_path <- paste0(Sys.getenv("HOME"), "/Library/CloudStorage/",
                     "OneDrive-OxfordUniversityClinicalResearchUnit/",
                     "GitHub/choisy/typhoid/")
 ```
 
+```{r include = FALSE}
+make_path <- function(x) paste0(data_path, "cache/", x)
+file_exists <- function(x) file.exists(make_path(x))
+readRDS2 <- function(x) readRDS(make_path(x))
+saveRDS2 <- function(object, file) saveRDS(object, make_path(file))
+```
+
+
 ## Package
+
+Required packages:
+
+```{r}
+required_packages <- c("dplyr", "purrr", "rsample", "recipes", "themis", "parsnip",
+                       "workflows", "yardstick", "tune", "finetune", "dials",
+                       "randomForest")
+```
+
+Installing those that are not installed:
+
+```{r}
+to_inst <- required_packages[! required_packages %in% installed.packages()[,"Package"]]
+if (length(to_inst)) install.packages(to_inst)
+```
+
+Loading some for interactive use:
 
 ```{r message = FALSE}
 library(dplyr)
@@ -60,28 +87,30 @@ library(finetune)
 library(dials)
 ```
 
+
 ## Utilitary functions
 
-Functions for caching long simulations results:
+A function that reads a clean data set:
 
 ```{r}
-file_exists <- function(x) file.exists(paste0(data_path, "cache/", x))
-readRDS2 <- function(x) readRDS(paste0(data_path, "cache/", x))
-saveRDS2 <- function(object, file) saveRDS(object, paste0(data_path, "cache/", file))
+read_clean_data <- function(file) readRDS(paste0(data_path, "clean_data/", file))
 ```
 
-A function that transforms a logical vector into a factor vector (with the correct number of levels):
+A function that transforms a logical vector into a factor vector (with the correct
+number of levels):
 
 ```{r}
 logical2factor <- function(x) factor(x, c("FALSE", "TRUE"))
 ```
 
-This function builds an `rsplit` object by combining independent train and test data sets:
+This function builds an `rsplit` object by combining independent train and test data
+sets:
 
 ```{r}
 make_splits2 <- function(train, test) {
-  make_splits(list(analysis   = seq(nrow(train)),
-                   assessment = nrow(train) + seq(nrow(test))),
+  n_train <- nrow(train)
+  make_splits(list(analysis   = seq(n_train),
+                   assessment = n_train + seq(nrow(test))),
               bind_rows(train, test))
 }
 ```
@@ -99,15 +128,17 @@ Tuning the `last_fit()` function:
 
 ```{r}
 last_fit2 <- function(wf, split, metrics) {
-  tmp <- wf |> 
+# the external validation:
+  external <- wf |> 
     last_fit(split, metrics = metrics) |> 
     collect_metrics2() |> 
     select(-.metric)
     
+# the internal cross-validation:
   wf |>
     fit_resamples(vfold_cv(training(split)), metrics = metrics) |> 
     collect_metrics2() |> 
-    bind_cols(tmp)
+    bind_cols(external) # to which we stick the external one.
 }
 ```
 
@@ -116,8 +147,8 @@ last_fit2 <- function(wf, split, metrics) {
 The Nepal dataset:
 
 ```{r}
-nepal <- paste0(data_path, "clean_data/nepal.rds") |>
-  readRDS() |> 
+nepal <- "nepal.rds" |> 
+  read_clean_data() |> 
   mutate(across(c(cough, diarrhea, vomiting, abdominal_pain, constipation, headache),
                 as.logical),
          across(c(age, platelets), as.numeric),
@@ -131,8 +162,8 @@ nepal <- paste0(data_path, "clean_data/nepal.rds") |>
 The Cambodia and Bangladesh dataset:
 
 ```{r}
-cambodia_bangladesh <- paste0(data_path, "clean_data/cambodia_bangladesh.rds") |>
-  readRDS() |> 
+cambodia_bangladesh <- "cambodia_bangladesh.rds" |> 
+  read_clean_data() |> 
   mutate(across(fever, ~ .x > 2),
          across(where(is.logical), logical2factor)) |> 
   select(-country) |> 
@@ -143,16 +174,12 @@ cambodia_bangladesh <- paste0(data_path, "clean_data/cambodia_bangladesh.rds") |
 Checking the consistency of the levels of the factors between the two datasets:
 
 ```{r}
-levels_nepal <- nepal |> 
+get_levels <- function(x) x |>
   select(sex, IgM, CRP) |> 
   map(levels)
 
-levels_cambodia_bangladesh <- cambodia_bangladesh |> 
-  select(sex, IgM, CRP) |> 
-  map(levels)
-
-identical(levels_nepal, levels_cambodia_bangladesh)
-rm(levels_nepal, levels_cambodia_bangladesh)
+identical(get_levels(nepal), get_levels(cambodia_bangladesh))
+rm(get_levels)
 ```
 
 ## The metric
@@ -168,7 +195,9 @@ the_metric <- metric_set(roc_auc)
 Let's consider the two of the two data sets:
 
 ```{r}
+# train on Cambodia and Bangladesh and test on Nepal:
 splits1 <- make_splits2(cambodia_bangladesh, nepal)
+# train on Nepal and test on Cambodia and Bangladesh:
 splits2 <- make_splits2(nepal, cambodia_bangladesh)
 ```
 
@@ -189,11 +218,24 @@ random_forest_tuned <- rand_forest("classification", "randomForest",
 
 ## Functions to tune workflow
 
-The function that tunes 1 model:
+The function that builds a workflow without tuning:
+
+```{r}
+workflow_no_tune <- function(model, splits) {
+  recipe(culture ~ ., training(splits)) |>
+    step_unorder(all_ordered_predictors()) |> # adding this
+    step_dummy(all_factor_predictors()) |> 
+    step_smotenc(culture) |> 
+    workflow(model)
+}
+```
+
+The function that builds a workflow and tune it:
 
 ```{r}
 workflow_tune <- function(model, split, size = 25, metric = the_metric,
                           mtry_range = c(1, 10)) {
+  
   check_mtry <- function(x) {
     if (x$component[1] == "rand_forest") {
       if (any(map_chr(x$object[[1]]$range, class) == "call")) {
@@ -202,47 +244,34 @@ workflow_tune <- function(model, split, size = 25, metric = the_metric,
     }
     x
   }
-  
-  training_data <- training(split)
-  
-  wkflw <- recipe(culture ~ ., training_data) |>
-    step_unorder(all_ordered_predictors()) |> 
-    step_dummy(all_factor_predictors()) |> 
-    step_smotenc(culture) |> 
-    workflow(model)
+    
+  select_best2 <- function(...)
+    select_best(..., metric = names(attributes(metric)$metrics))
+
+  wkflw <- workflow_no_tune(model, split)
   
   grid <- wkflw |> 
     extract_parameter_set_dials() |> 
     check_mtry() |> 
     grid_space_filling(size = size)
   
-  resamples <- vfold_cv(training_data)
+  resamples <- vfold_cv(training(split))
 
-  grid_search <- wkflw |>
-    tune_grid(resamples = resamples, grid = grid, metrics = metric)
+  grid_search <- tune_grid(wkflw, resamples = resamples, grid = grid, metrics = metric)
     
-  iterative_search <- wkflw |>
-    safely(tune_bayes)(resamples = resamples, initial = grid_search, metrics = metric)
-  
-  select_best2 <- function(...)
-    select_best(..., metric = names(attributes(metric)$metrics))
+  iterative_search <- safely(tune_bayes)(wkflw, resamples = resamples,
+                                         initial = grid_search, metrics = metric)
   
   output <- list(grid_search = finalize_workflow(wkflw, select_best2(grid_search)))
-  if (is.null(iterative_search$result)) {
-    return(output)
-  } else {
-    output$iterative_search <- finalize_workflow(wkflw,
-                                                 select_best2(iterative_search$result))
-  }
+  if (is.null(iterative_search$result)) return(output)
+  output$iterative_search <- finalize_workflow(wkflw,
+                                               select_best2(iterative_search$result))
   output
 }
 ```
 
-```{r}
-#workflow_tune(logistic_regression_lasso, splits1)
-```
-
-A wrapper around the above function to tune several models at once:
+Wrappers around the above 2 functions to build and possibly tune several models at
+once:
 
 ```{r}
 workflows_tune <- function(models, split, size = 25, metric = the_metric,
@@ -252,19 +281,14 @@ workflows_tune <- function(models, split, size = 25, metric = the_metric,
     unlist(FALSE) |> 
     unname()
 }
-
 ```
 
-## Function that makes workflows without tuning
+and:
 
 ```{r}
-workflow_no_tune <- function(model, splits) {
-  recipe(culture ~ ., training(splits)) |>
-    step_dummy(all_factor_predictors()) |> 
-    step_smotenc(culture) |> 
-    workflow(model)
-}
+workflows_no_tune <- function(models, splits) map(models, workflow_no_tune, splits)
 ```
+
 
 ## Models comparisons
 
@@ -272,19 +296,18 @@ Making all the workflows:
 
 ```{r}
 make_workflows <- function(splits) {
-  non_tuned_workflows <- map(list(logistic_regression, random_forest),
-                             workflow_no_tune, splits)
+  non_tuned_workflows <- workflows_no_tune(list(logistic_regression, random_forest),
+                                           splits)
   
   tuned_workflows <- workflows_tune(list(logistic_regression_elasticnet,
                                          logistic_regression_lasso, random_forest_tuned),
                                     splits)
   
-  list(non_tuned_workflows, tuned_workflows) |> 
-    unlist(FALSE)
+  unlist(list(non_tuned_workflows, tuned_workflows), FALSE)
 }
 ```
 
-Takes 6'50":
+Takes 9'42":
 
 ```{r eval = FALSE}
 workflows <- map(list(splits1, splits2), make_workflows)
@@ -299,7 +322,7 @@ if (file_exists("workflows.rds")) {
 }
 ```
 
-Takes 44":
+Takes 67":
 
 ```{r eval = FALSE}
 workflows_performances <- map2(workflows, list(splits1, splits2),
@@ -307,6 +330,16 @@ workflows_performances <- map2(workflows, list(splits1, splits2),
 ```
 
 ```{r include = FALSE}
+if (file_exists("workflows_performances.rds")) {
+  workflows_performances <- readRDS2("workflows_performances.rds")
+} else {
+  workflows_performances <- map2(workflows, list(splits1, splits2),
+                               ~ map(.x, last_fit2, .y, the_metric)) |> bind_rows()
+  saveRDS2(workflows_performances, "workflows_performances.rds")
+}
+```
+
+```{r include = FALSE, eval = FALSE}
 if (file_exists("workflows_performances.rds")) {
   workflows_performances <- readRDS2("workflows_performances.rds")
 } else {
@@ -320,7 +353,11 @@ if (file_exists("workflows_performances.rds")) {
 ```
 
 ```{r}
-workflows_performances
+tibble(
+    train  = rep(c("CamBan", "Nepal"), each = 8), 
+    model  = rep(c("LR", "RF", rep(c("LS_EN", "LR_lasso", "RF_tuned"), each = 2)), 2),
+    search = rep(c(rep(NA, 2), rep(c("grid", "iter"), 3)), 2)) |>
+  bind_cols(workflows_performances)
 ```
 
 ```{r}
@@ -346,3 +383,6 @@ abline(0, 1)
 box(bty = "o")
 par(opar)
 ```
+
+
+
