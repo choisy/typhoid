@@ -433,10 +433,30 @@ volumes_bangladesh |>
   pull(BC_Vol) |> 
   na.exclude() |> 
   density(from = 0) |> 
-  plot(xlim = c(0, 20), ylim = c(0, .15), col = 3, lwd = 2, main = NA)
+  plot(xlim = c(0, 20), ylim = c(0, .15), col = 4, lwd = 2, main = NA,
+       xlab = "volume", ylab = "density")
 
-abline(v = 3.45)
+abline(v = 6.6)
 ```
+
+```{r}
+volumes_bangladesh |> 
+  pull(BC_Vol) |> 
+  na.exclude() |> 
+  hist(n = 100, xlim = c(0, 16), col = 4, xlab = "volume", ylab = "frequency", main = NA)
+
+par(new = TRUE)
+
+volumes_bangladesh |> 
+  pull(BC_Vol) |> 
+  na.exclude() |> 
+  density(from = 0) |> 
+  plot(xlim = c(0, 16), ylim = c(0, .15), col = 2, lwd = 2, main = NA,
+       xlab = "volume", ylab = "density", axes = FALSE, ann = FALSE)
+
+abline(v = 6.6, col = 3, lwd = 2)
+```
+
 
 ```{r}
 rpart::rpart(BC_result ~ BC_Vol, volumes_bangladesh)
@@ -460,11 +480,55 @@ volumes_bangladesh |>
 ```
 
 ```{r}
-mod <- glm(BC_result ~ BC_Vol, binomial, volumes_bangladesh)
-xs <- seq(0, 15, le = 512)
+mod1 <- glm(BC_result ~ BC_Vol, binomial, volumes_bangladesh)
+xs <- seq(0, 16, le = 512)
 pred <- predict(mod, data.frame(BC_Vol = xs), type = "response", se = TRUE)
 plot(xs, pred$fit, type = "l", ylim = c(0, .3))
 lines(xs, pred$fit - 1.96 * pred$se.fit, lty = 2)
 lines(xs, pred$fit + 1.96 * pred$se.fit, lty = 2)
 ```
+
+```{r}
+mod2 <- glm(BC_result ~ BC_Vol + I(BC_Vol^2), binomial, volumes_bangladesh)
+xs <- seq(0, 16, le = 512)
+pred <- predict(mod, data.frame(BC_Vol = xs), type = "response", se = TRUE)
+plot(xs, pred$fit, type = "l", ylim = c(0, .3))
+lines(xs, pred$fit - 1.96 * pred$se.fit, lty = 2)
+lines(xs, pred$fit + 1.96 * pred$se.fit, lty = 2)
+
+anova(mod1, mod2, test = "LRT")
+```
+
+
+```{r}
+library(mgcv)
+mod_gam <- mgcv::gam(BC_result ~ s(BC_Vol, bs = "bs", m = c(3, 2)), binomial, volumes_bangladesh, method = "REML")
+pred_gam <- predict(mod_gam, data.frame(BC_Vol = xs), type = "response", se = TRUE)
+plot(xs, pred_gam$fit, type = "n", ylim = c(0, .32), xlab = "volume",
+     ylab = "probability of positive culture")
+
+polygon(c(xs, rev(xs)),
+        c(pred_gam$fit - 1.96 * pred$se.fit, rev(pred_gam$fit + 1.96 * pred$se.fit)),
+        border = NA, col = adjustcolor(4, .2))
+lines(xs, pred_gam$fit, col = 4, lwd = 2)
+
+abline(v = 6.6, lwd = 2, col = 3)
+```
+
+```{r}
+library(mgcv)
+mod_gam <- mgcv::gam(BC_result ~ s(BC_Vol, bs = "bs", m = c(3, 2)), binomial,
+                     volumes_bangladesh, method = "REML")
+pred_gam <- predict(mod_gam, data.frame(BC_Vol = xs), type = "response", se = TRUE)
+plot(xs, pred_gam$fit, type = "n", ylim = c(0, .32), xlab = "volume",
+     ylab = "probability of positive culture")
+
+polygon(c(xs, rev(xs)),
+        c(pred_gam$fit - 1.96 * pred$se.fit, rev(pred_gam$fit + 1.96 * pred$se.fit)),
+        border = NA, col = adjustcolor(4, .2))
+lines(xs, pred_gam$fit, col = 4, lwd = 2)
+
+abline(v = 6.6, lwd = 2, col = 3)
+```
+
 
