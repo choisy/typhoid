@@ -152,7 +152,7 @@ nepal <- "nepal.rds" |>
   mutate(across(c(cough, diarrhea, vomiting, abdominal_pain, constipation, headache),
                 as.logical),
          across(c(age, platelets), as.numeric),
-         across(fever, ~ .x > 2),
+         across(fever, ~ .x > 2), ### isn't it the case anyway? 
          across(where(is.logical), logical2factor)) |> 
   select(-starts_with("score")) |> 
   select(-fever) |> 
