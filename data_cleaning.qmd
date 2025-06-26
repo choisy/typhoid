@@ -27,7 +27,7 @@ data_path <- paste0("/Users/MarcChoisy/Library/CloudStorage/",
 required packages:
 
 ```{r}
-required_packages <- c("readxl", "dplyr")
+required_packages <- c("readxl", "dplyr", "naniar")
 ```
 
 Making sure that the required packages are installed:
@@ -99,7 +99,7 @@ nepal <- files[grep("nepa", files)] |>
 Reading and cleaning raw data from Cambodia and Bangladesh:
 
 ```{r}
-cambodia_bangladesh <- files[grep("camb", files)] |>
+cambodia_bangladesh <- files[grep("camb_", files)] |>
   read_excel() |> 
   select(culture, sex, Age, feverdays, cough, diarrhoea, vomiting, abdopain,
          constipation, headache, pulse, `temp A`, spleen, hepat, wbc, plts, alt,
@@ -114,11 +114,38 @@ cambodia_bangladesh <- files[grep("camb", files)] |>
          across(country, ~ factor(c("Cambodia", "Bangladesh")[.x])))
 ```
 
-Saving to disk:
+## Reading and cleaning the blood volume data
+
+The data from Bangladesh:
+
+```{r}
+bv_bangladesh <- files[grep("bangl", files)] |> 
+  read_excel() |> 
+  naniar::replace_with_na(list(Weight = "nr")) |> 
+  rename(age = `Age (years)`) |> 
+  mutate(weight  = as.numeric(Weight),
+         volume  = BC_post - BC_pre,
+         culture = BC_result == "Pos") |> 
+  select(age, weight, volume, culture)
+```
+
+The data from Cambodia:
+
+```{r}
+bv_cambodia <- files[grep("cambo", files)] |> 
+  read_excel() |> 
+  mutate(age     = as.numeric((admdate - dateofbirth) / 365.25),
+         volume  = bcultwt2 - bcultwt1,
+         culture = bculture == "S typhi") |> 
+  tidyr::replace_na(list(culture = FALSE)) |> 
+  select(age, weight, volume, culture)
+```
+
+## Saving to disk:
 
 ```{r}
 saveRDS(nepal, paste0(data_path, "clean_data/nepal.rds"))
 saveRDS(cambodia_bangladesh, paste0(data_path, "clean_data/cambodia_bangladesh.rds"))
+saveRDS(bv_bangladesh, paste0(data_path, "clean_data/bv_bangladesh.rds"))
+saveRDS(bv_cambodia, paste0(data_path, "clean_data/bv_cambodia.rds"))
 ```
-
-
