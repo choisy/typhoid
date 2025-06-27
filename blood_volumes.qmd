@@ -125,7 +125,8 @@ Volume as a function of age:
 
 ```{r}
 plot2(age, volume)
-abline(v = 20)
+abline(v = 15)
+abline(h = 10)
 ```
 
 Volume as a function of weight:
@@ -191,61 +192,82 @@ anova(model)
 ```
 
 ```{r}
-processed <- blood_volumes |> 
-  filter(country == "Bangladesh") |> 
-  select(volume, culture) |> 
-  na.exclude() |> 
-  mutate(vol_cat = cut(volume, quantile(volume, seq(0, 1, .1)),
-                       include.lowest = TRUE)) |>
-  separate(vol_cat, c("vol_lower", "vol_upper"), ",") |> 
-  mutate(across(starts_with("vol_"), ~ .x |>
-                  str_remove("\\(|\\[|\\]") |>
-                  as.numeric())) |> 
-  rowwise() |> 
-  mutate(vol_mean = mean(c(vol_lower, vol_upper))) |> 
-  ungroup() |>
-  group_by(vol_mean) |> 
-  mutate(prop     = list(prop.test(sum(culture), length(culture))),
-         cult_est = map_dbl(prop, ~ .x$estimate),
-         confint  = map(prop, ~ setNames(.x$conf.int,
-                                                c("cult_lower", "cult_upper")))) |> 
-  unnest_wider(confint)
+qsplit <- function(x) {
+  x |> 
+    select(volume, culture) |> 
+    na.exclude() |> 
+    mutate(vol_cat = cut(volume, quantile(volume, seq(0, 1, .1)),
+                         include.lowest = TRUE)) |>
+    separate(vol_cat, c("vol_lower", "vol_upper"), ",") |> 
+    mutate(across(starts_with("vol_"), ~ .x |>
+                    str_remove("\\(|\\[|\\]") |>
+                    as.numeric())) |> 
+    rowwise() |> 
+    mutate(vol_mean = mean(c(vol_lower, vol_upper))) |> 
+    ungroup() |>
+    group_by(vol_mean) |> 
+    mutate(prop     = list(prop.test(sum(culture), length(culture))),
+           cult_est = map_dbl(prop, ~ .x$estimate),
+           confint  = map(prop, ~ setNames(.x$conf.int,
+                                           c("cult_lower", "cult_upper")))) |> 
+    unnest_wider(confint)
+}
 ```
 
-A GAM model:
+A GAM model and its predictions:
 
 ```{r}
-gam_model <- blood_volumes |> 
-  filter(country == "Bangladesh") |> 
-  select(volume, culture) |> 
-  na.exclude() |> 
-  with(mgcv::gam(culture ~ s(volume), binomial, method = "REML"))
+gmod <- function(x, ci, n) {
+  volume_vals <- seq(min(x$volume, na.rm = TRUE), max(x$volume, na.rm = TRUE), le = n)
+  
+  gam_model <- x |> 
+    select(volume, culture) |> 
+    na.exclude() |> 
+    with(mgcv::gam(culture ~ s(volume), binomial, method = "REML"))
+  
+  z <- qt(1 - (1 - ci) / 2, length(gam_model$residuals) - 1)
+  
+  gam_predictions <- predict(gam_model, list(volume = volume_vals), se = TRUE) |> 
+    data.frame() |> 
+    as_tibble() |> 
+    mutate(volume = volume_vals,
+           lower  = fit - z * se.fit,
+           upper  = fit + z * se.fit,
+           across(c(lower, fit, upper), gam_model$family$linkinv)) |> 
+    select(-se.fit)
+}
 ```
-
-Making a figure out of these processed data:
 
 ```{r}
-with(processed, {
-  plot(NA, xlim = c(0, max(vol_upper)), ylim = c(0, max(cult_upper)),
-       xlab = "volume (mL)", ylab = "probability of culture positive")
-  arrows(vol_mean, cult_lower, vol_mean, cult_upper, .1, 90, 3, col = 2, lwd = 2)
-  points(vol_mean, cult_est, col = 2, pch = 19)
-  abline(v = unique(c(vol_lower, vol_upper)), lty = 2, col = "grey")
-})
-
-volume_vals <- seq(0, 16, le = 512)
-gam_predictions <- predict(gam_model, list(volume = volume_vals),
-                           type = "response", se = TRUE)
-with(gam_predictions, {
-  polygon(c(volume_vals, rev(volume_vals)), border = NA, col = adjustcolor(4, .2),
-          c(fit - 1.96 * se.fit, rev(fit + 1.96 * se.fit)))
-  lines(volume_vals, fit, col = 4, lwd = 2)
-})
+plot_proba_volume <- function(x, ci, n) {
+  x |> 
+    qsplit() |> 
+    with({
+      plot(NA, xlim = c(0, max(vol_upper)), ylim = c(0, max(cult_upper)),
+           xlab = "volume (mL)", ylab = "probability of culture positive")
+      arrows(vol_mean, cult_lower, vol_mean, cult_upper, .05, 90, 3, col = 2, lwd = 2)
+      points(vol_mean, cult_est, col = 2, pch = 19)
+      abline(v = unique(c(vol_lower, vol_upper)), lty = 2, col = "grey")
+    })
+  
+  x |> 
+    gmod(ci, n) |> 
+    with({
+      polygon(c(volume, rev(volume)), border = NA, col = adjustcolor(4, .2),
+              c(lower, rev(upper)))
+      lines(volume, fit, col = 4, lwd = 2)
+    })
+}
 ```
-
 
 ```{r}
 blood_volumes |> 
   filter(country == "Bangladesh") |> 
-  select(age, culture)
+  plot_proba_volume(.95, 512)
+```
+
+```{r}
+blood_volumes |> 
+  filter(country == "Bangladesh", age < 16) |> 
+  plot_proba_volume(.95, 512)
 ```
