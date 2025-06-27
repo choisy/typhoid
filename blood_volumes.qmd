@@ -18,7 +18,9 @@ knitr::knit_hooks$set(
 
 knitr::opts_chunk$set(margin     = TRUE,
                       fig.retina = 2,
-                      fig.align  = "center")
+                      fig.align  = "center",
+                      fig.width  = 5.6,
+                      fig.height = 4)
 ```
 
 
@@ -210,6 +212,18 @@ processed <- blood_volumes |>
   unnest_wider(confint)
 ```
 
+A GAM model:
+
+```{r}
+gam_model <- blood_volumes |> 
+  filter(country == "Bangladesh") |> 
+  select(volume, culture) |> 
+  na.exclude() |> 
+  with(mgcv::gam(culture ~ s(volume), binomial, method = "REML"))
+```
+
+Making a figure out of these processed data:
+
 ```{r}
 with(processed, {
   plot(NA, xlim = c(0, max(vol_upper)), ylim = c(0, max(cult_upper)),
@@ -218,7 +232,17 @@ with(processed, {
   points(vol_mean, cult_est, col = 2, pch = 19)
   abline(v = unique(c(vol_lower, vol_upper)), lty = 2, col = "grey")
 })
+
+volume_vals <- seq(0, 16, le = 512)
+gam_predictions <- predict(gam_model, list(volume = volume_vals),
+                           type = "response", se = TRUE)
+with(gam_predictions, {
+  polygon(c(volume_vals, rev(volume_vals)), border = NA, col = adjustcolor(4, .2),
+          c(fit - 1.96 * se.fit, rev(fit + 1.96 * se.fit)))
+  lines(volume_vals, fit, col = 4, lwd = 2)
+})
 ```
+
 
 ```{r}
 blood_volumes |> 

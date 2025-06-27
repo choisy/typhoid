@@ -81,7 +81,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <ul>
   <li><a href="#limitations-and-suggestions" id="toc-limitations-and-suggestions" class="nav-link active" data-scroll-target="#limitations-and-suggestions">Limitations and suggestions</a></li>
   <li><a href="#global-parameters" id="toc-global-parameters" class="nav-link" data-scroll-target="#global-parameters">Global parameters</a></li>
-  <li><a href="#package" id="toc-package" class="nav-link" data-scroll-target="#package">Package</a></li>
+  <li><a href="#packages" id="toc-packages" class="nav-link" data-scroll-target="#packages">Packages</a></li>
   <li><a href="#utilitary-functions" id="toc-utilitary-functions" class="nav-link" data-scroll-target="#utilitary-functions">Utilitary functions</a></li>
   <li><a href="#reading-the-clean-data" id="toc-reading-the-clean-data" class="nav-link" data-scroll-target="#reading-the-clean-data">Reading the clean data</a></li>
   <li><a href="#the-metric" id="toc-the-metric" class="nav-link" data-scroll-target="#the-metric">The metric</a></li>
@@ -90,6 +90,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#functions-to-tune-workflow" id="toc-functions-to-tune-workflow" class="nav-link" data-scroll-target="#functions-to-tune-workflow">Functions to tune workflow</a></li>
   <li><a href="#models-comparisons" id="toc-models-comparisons" class="nav-link" data-scroll-target="#models-comparisons">Models comparisons</a></li>
   <li><a href="#blood-volume" id="toc-blood-volume" class="nav-link" data-scroll-target="#blood-volume">Blood volume</a></li>
+  <li><a href="#blood-volumes-2" id="toc-blood-volumes-2" class="nav-link" data-scroll-target="#blood-volumes-2">Blood volumes 2</a></li>
   </ul>
 </nav>
 </div>
@@ -139,8 +140,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>                    <span class="st">"GitHub/choisy/typhoid/"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
 </section>
-<section id="package" class="level2">
-<h2 class="anchored" data-anchor-id="package">Package</h2>
+<section id="packages" class="level2">
+<h2 class="anchored" data-anchor-id="packages">Packages</h2>
 <p>Required packages:</p>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>required_packages <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">"dplyr"</span>, <span class="st">"purrr"</span>, <span class="st">"rsample"</span>, <span class="st">"recipes"</span>, <span class="st">"themis"</span>, <span class="st">"parsnip"</span>,</span>
@@ -219,7 +220,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="fu">across</span>(<span class="fu">c</span>(cough, diarrhea, vomiting, abdominal_pain, constipation, headache),</span>
 <span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>                as.logical),</span>
 <span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>         <span class="fu">across</span>(<span class="fu">c</span>(age, platelets), as.numeric),</span>
-<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>         <span class="fu">across</span>(fever, <span class="sc">~</span> .x <span class="sc">&gt;</span> <span class="dv">2</span>),</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>         <span class="fu">across</span>(fever, <span class="sc">~</span> .x <span class="sc">&gt;</span> <span class="dv">2</span>), <span class="do">### isn't it the case anyway? </span></span>
 <span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>         <span class="fu">across</span>(<span class="fu">where</span>(is.logical), logical2factor)) <span class="sc">|&gt;</span> </span>
 <span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(<span class="sc">-</span><span class="fu">starts_with</span>(<span class="st">"score"</span>)) <span class="sc">|&gt;</span> </span>
 <span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(<span class="sc">-</span>fever) <span class="sc">|&gt;</span> </span>
@@ -602,9 +603,9 @@ node), split, n, deviance, yval
 </div>
 </div>
 <div class="cell" data-layout-align="center">
-<div class="sourceCode cell-code" id="cb44"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">glm</span>(BC_result <span class="sc">~</span> BC_Vol, binomial, volumes_bangladesh)</span>
+<div class="sourceCode cell-code" id="cb44"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>mod1 <span class="ot">&lt;-</span> <span class="fu">glm</span>(BC_result <span class="sc">~</span> BC_Vol, binomial, volumes_bangladesh)</span>
 <span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>xs <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="dv">0</span>, <span class="dv">16</span>, <span class="at">le =</span> <span class="dv">512</span>)</span>
-<span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a>pred <span class="ot">&lt;-</span> <span class="fu">predict</span>(mod, <span class="fu">data.frame</span>(<span class="at">BC_Vol =</span> xs), <span class="at">type =</span> <span class="st">"response"</span>, <span class="at">se =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a>pred <span class="ot">&lt;-</span> <span class="fu">predict</span>(mod1, <span class="fu">data.frame</span>(<span class="at">BC_Vol =</span> xs), <span class="at">type =</span> <span class="st">"response"</span>, <span class="at">se =</span> <span class="cn">TRUE</span>)</span>
 <span id="cb44-4"><a href="#cb44-4" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(xs, pred<span class="sc">$</span>fit, <span class="at">type =</span> <span class="st">"l"</span>, <span class="at">ylim =</span> <span class="fu">c</span>(<span class="dv">0</span>, .<span class="dv">3</span>))</span>
 <span id="cb44-5"><a href="#cb44-5" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(xs, pred<span class="sc">$</span>fit <span class="sc">-</span> <span class="fl">1.96</span> <span class="sc">*</span> pred<span class="sc">$</span>se.fit, <span class="at">lty =</span> <span class="dv">2</span>)</span>
 <span id="cb44-6"><a href="#cb44-6" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(xs, pred<span class="sc">$</span>fit <span class="sc">+</span> <span class="fl">1.96</span> <span class="sc">*</span> pred<span class="sc">$</span>se.fit, <span class="at">lty =</span> <span class="dv">2</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
@@ -617,7 +618,32 @@ node), split, n, deviance, yval
 </div>
 </div>
 <div class="cell" data-layout-align="center">
-<div class="sourceCode cell-code" id="cb45"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(mgcv)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb45"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a>mod2 <span class="ot">&lt;-</span> <span class="fu">glm</span>(BC_result <span class="sc">~</span> BC_Vol <span class="sc">+</span> <span class="fu">I</span>(BC_Vol<span class="sc">^</span><span class="dv">2</span>), binomial, volumes_bangladesh)</span>
+<span id="cb45-2"><a href="#cb45-2" aria-hidden="true" tabindex="-1"></a>xs <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="dv">0</span>, <span class="dv">16</span>, <span class="at">le =</span> <span class="dv">512</span>)</span>
+<span id="cb45-3"><a href="#cb45-3" aria-hidden="true" tabindex="-1"></a>pred <span class="ot">&lt;-</span> <span class="fu">predict</span>(mod2, <span class="fu">data.frame</span>(<span class="at">BC_Vol =</span> xs), <span class="at">type =</span> <span class="st">"response"</span>, <span class="at">se =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb45-4"><a href="#cb45-4" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(xs, pred<span class="sc">$</span>fit, <span class="at">type =</span> <span class="st">"l"</span>, <span class="at">ylim =</span> <span class="fu">c</span>(<span class="dv">0</span>, .<span class="dv">3</span>))</span>
+<span id="cb45-5"><a href="#cb45-5" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(xs, pred<span class="sc">$</span>fit <span class="sc">-</span> <span class="fl">1.96</span> <span class="sc">*</span> pred<span class="sc">$</span>se.fit, <span class="at">lty =</span> <span class="dv">2</span>)</span>
+<span id="cb45-6"><a href="#cb45-6" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(xs, pred<span class="sc">$</span>fit <span class="sc">+</span> <span class="fl">1.96</span> <span class="sc">*</span> pred<span class="sc">$</span>se.fit, <span class="at">lty =</span> <span class="dv">2</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="classification_files/figure-html/unnamed-chunk-42-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+<div class="sourceCode cell-code" id="cb46"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="fu">anova</span>(mod1, mod2, <span class="at">test =</span> <span class="st">"LRT"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Analysis of Deviance Table
+
+Model 1: BC_result ~ BC_Vol
+Model 2: BC_result ~ BC_Vol + I(BC_Vol^2)
+  Resid. Df Resid. Dev Df Deviance Pr(&gt;Chi)
+1       302     291.79                     
+2       301     289.18  1   2.6051   0.1065</code></pre>
+</div>
+</div>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb48"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(mgcv)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stderr">
 <pre><code>Loading required package: nlme</code></pre>
 </div>
@@ -633,21 +659,238 @@ Attaching package: 'nlme'</code></pre>
 <div class="cell-output cell-output-stderr">
 <pre><code>This is mgcv 1.9-3. For overview type 'help("mgcv-package")'.</code></pre>
 </div>
-<div class="sourceCode cell-code" id="cb50"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a>mod_gam <span class="ot">&lt;-</span> mgcv<span class="sc">::</span><span class="fu">gam</span>(BC_result <span class="sc">~</span> <span class="fu">s</span>(BC_Vol), binomial, volumes_bangladesh, <span class="at">method =</span> <span class="st">"REML"</span>)</span>
-<span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a>pred_gam <span class="ot">&lt;-</span> <span class="fu">predict</span>(mod_gam, <span class="fu">data.frame</span>(<span class="at">BC_Vol =</span> xs), <span class="at">type =</span> <span class="st">"response"</span>, <span class="at">se =</span> <span class="cn">TRUE</span>)</span>
-<span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(xs, pred_gam<span class="sc">$</span>fit, <span class="at">type =</span> <span class="st">"n"</span>, <span class="at">ylim =</span> <span class="fu">c</span>(<span class="dv">0</span>, .<span class="dv">32</span>), <span class="at">xlab =</span> <span class="st">"volume"</span>,</span>
-<span id="cb50-4"><a href="#cb50-4" aria-hidden="true" tabindex="-1"></a>     <span class="at">ylab =</span> <span class="st">"probability of positive culture"</span>)</span>
-<span id="cb50-5"><a href="#cb50-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb50-6"><a href="#cb50-6" aria-hidden="true" tabindex="-1"></a><span class="fu">polygon</span>(<span class="fu">c</span>(xs, <span class="fu">rev</span>(xs)),</span>
-<span id="cb50-7"><a href="#cb50-7" aria-hidden="true" tabindex="-1"></a>        <span class="fu">c</span>(pred_gam<span class="sc">$</span>fit <span class="sc">-</span> <span class="fl">1.96</span> <span class="sc">*</span> pred<span class="sc">$</span>se.fit, <span class="fu">rev</span>(pred_gam<span class="sc">$</span>fit <span class="sc">+</span> <span class="fl">1.96</span> <span class="sc">*</span> pred<span class="sc">$</span>se.fit)),</span>
-<span id="cb50-8"><a href="#cb50-8" aria-hidden="true" tabindex="-1"></a>        <span class="at">border =</span> <span class="cn">NA</span>, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="dv">4</span>, .<span class="dv">2</span>))</span>
-<span id="cb50-9"><a href="#cb50-9" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(xs, pred_gam<span class="sc">$</span>fit, <span class="at">col =</span> <span class="dv">4</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
-<span id="cb50-10"><a href="#cb50-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb50-11"><a href="#cb50-11" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">v =</span> <span class="fl">6.6</span>, <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">col =</span> <span class="dv">3</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb53"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a>mod_gam <span class="ot">&lt;-</span> mgcv<span class="sc">::</span><span class="fu">gam</span>(BC_result <span class="sc">~</span> <span class="fu">s</span>(BC_Vol, <span class="at">bs =</span> <span class="st">"bs"</span>, <span class="at">m =</span> <span class="fu">c</span>(<span class="dv">3</span>, <span class="dv">2</span>)), binomial, volumes_bangladesh, <span class="at">method =</span> <span class="st">"REML"</span>)</span>
+<span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a>pred_gam <span class="ot">&lt;-</span> <span class="fu">predict</span>(mod_gam, <span class="fu">data.frame</span>(<span class="at">BC_Vol =</span> xs), <span class="at">type =</span> <span class="st">"response"</span>, <span class="at">se =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(xs, pred_gam<span class="sc">$</span>fit, <span class="at">type =</span> <span class="st">"n"</span>, <span class="at">ylim =</span> <span class="fu">c</span>(<span class="dv">0</span>, .<span class="dv">32</span>), <span class="at">xlab =</span> <span class="st">"volume"</span>,</span>
+<span id="cb53-4"><a href="#cb53-4" aria-hidden="true" tabindex="-1"></a>     <span class="at">ylab =</span> <span class="st">"probability of positive culture"</span>)</span>
+<span id="cb53-5"><a href="#cb53-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb53-6"><a href="#cb53-6" aria-hidden="true" tabindex="-1"></a><span class="fu">polygon</span>(<span class="fu">c</span>(xs, <span class="fu">rev</span>(xs)),</span>
+<span id="cb53-7"><a href="#cb53-7" aria-hidden="true" tabindex="-1"></a>        <span class="fu">c</span>(pred_gam<span class="sc">$</span>fit <span class="sc">-</span> <span class="fl">1.96</span> <span class="sc">*</span> pred<span class="sc">$</span>se.fit, <span class="fu">rev</span>(pred_gam<span class="sc">$</span>fit <span class="sc">+</span> <span class="fl">1.96</span> <span class="sc">*</span> pred<span class="sc">$</span>se.fit)),</span>
+<span id="cb53-8"><a href="#cb53-8" aria-hidden="true" tabindex="-1"></a>        <span class="at">border =</span> <span class="cn">NA</span>, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="dv">4</span>, .<span class="dv">2</span>))</span>
+<span id="cb53-9"><a href="#cb53-9" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(xs, pred_gam<span class="sc">$</span>fit, <span class="at">col =</span> <span class="dv">4</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb53-10"><a href="#cb53-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb53-11"><a href="#cb53-11" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">v =</span> <span class="fl">6.6</span>, <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">col =</span> <span class="dv">3</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure class="figure">
-<p><img src="classification_files/figure-html/unnamed-chunk-42-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672"></p>
+<p><img src="classification_files/figure-html/unnamed-chunk-43-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+</div>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb54"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(mgcv)</span>
+<span id="cb54-2"><a href="#cb54-2" aria-hidden="true" tabindex="-1"></a>mod_gam <span class="ot">&lt;-</span> mgcv<span class="sc">::</span><span class="fu">gam</span>(BC_result <span class="sc">~</span> <span class="fu">s</span>(BC_Vol, <span class="at">bs =</span> <span class="st">"bs"</span>, <span class="at">m =</span> <span class="fu">c</span>(<span class="dv">3</span>, <span class="dv">2</span>)), binomial,</span>
+<span id="cb54-3"><a href="#cb54-3" aria-hidden="true" tabindex="-1"></a>                     volumes_bangladesh, <span class="at">method =</span> <span class="st">"REML"</span>)</span>
+<span id="cb54-4"><a href="#cb54-4" aria-hidden="true" tabindex="-1"></a>pred_gam <span class="ot">&lt;-</span> <span class="fu">predict</span>(mod_gam, <span class="fu">data.frame</span>(<span class="at">BC_Vol =</span> xs), <span class="at">type =</span> <span class="st">"response"</span>, <span class="at">se =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb54-5"><a href="#cb54-5" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(xs, pred_gam<span class="sc">$</span>fit, <span class="at">type =</span> <span class="st">"n"</span>, <span class="at">ylim =</span> <span class="fu">c</span>(<span class="dv">0</span>, .<span class="dv">32</span>), <span class="at">xlab =</span> <span class="st">"volume"</span>,</span>
+<span id="cb54-6"><a href="#cb54-6" aria-hidden="true" tabindex="-1"></a>     <span class="at">ylab =</span> <span class="st">"probability of positive culture"</span>)</span>
+<span id="cb54-7"><a href="#cb54-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb54-8"><a href="#cb54-8" aria-hidden="true" tabindex="-1"></a><span class="fu">polygon</span>(<span class="fu">c</span>(xs, <span class="fu">rev</span>(xs)),</span>
+<span id="cb54-9"><a href="#cb54-9" aria-hidden="true" tabindex="-1"></a>        <span class="fu">c</span>(pred_gam<span class="sc">$</span>fit <span class="sc">-</span> <span class="fl">1.96</span> <span class="sc">*</span> pred<span class="sc">$</span>se.fit, <span class="fu">rev</span>(pred_gam<span class="sc">$</span>fit <span class="sc">+</span> <span class="fl">1.96</span> <span class="sc">*</span> pred<span class="sc">$</span>se.fit)),</span>
+<span id="cb54-10"><a href="#cb54-10" aria-hidden="true" tabindex="-1"></a>        <span class="at">border =</span> <span class="cn">NA</span>, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="dv">4</span>, .<span class="dv">2</span>))</span>
+<span id="cb54-11"><a href="#cb54-11" aria-hidden="true" tabindex="-1"></a><span class="fu">lines</span>(xs, pred_gam<span class="sc">$</span>fit, <span class="at">col =</span> <span class="dv">4</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb54-12"><a href="#cb54-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb54-13"><a href="#cb54-13" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">v =</span> <span class="fl">6.6</span>, <span class="at">lwd =</span> <span class="dv">2</span>, <span class="at">col =</span> <span class="dv">3</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="classification_files/figure-html/unnamed-chunk-44-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
+<section id="blood-volumes-2" class="level2">
+<h2 class="anchored" data-anchor-id="blood-volumes-2">Blood volumes 2</h2>
+<p>Reading the data:</p>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb55"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a>bv_bangladesh <span class="ot">&lt;-</span> <span class="fu">read_clean_data</span>(<span class="st">"bv_bangladesh.rds"</span>)</span>
+<span id="cb55-2"><a href="#cb55-2" aria-hidden="true" tabindex="-1"></a>bv_cambodia <span class="ot">&lt;-</span> <span class="fu">read_clean_data</span>(<span class="st">"bv_cambodia.rds"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<p>Combining the data:</p>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb56"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb56-1"><a href="#cb56-1" aria-hidden="true" tabindex="-1"></a>blood_volumes <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(bv_bangladesh, bv_cambodia, <span class="at">.id =</span> <span class="st">"country"</span>) <span class="sc">|&gt;</span> </span>
+<span id="cb56-2"><a href="#cb56-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="fu">across</span>(country, <span class="sc">~</span> <span class="fu">c</span>(<span class="st">"Bangladesh"</span>, <span class="st">"Cambodia"</span>)[<span class="fu">as.numeric</span>(.x)]))</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<p>The percentage of missing values per variable and country:</p>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb57"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb57-1"><a href="#cb57-1" aria-hidden="true" tabindex="-1"></a>blood_volumes <span class="sc">|&gt;</span> </span>
+<span id="cb57-2"><a href="#cb57-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(country) <span class="sc">|&gt;</span> </span>
+<span id="cb57-3"><a href="#cb57-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="fu">across</span>(<span class="fu">c</span>(age, weight, volume), <span class="sc">~</span> <span class="fu">sum</span>(<span class="fu">is.na</span>(.x)) <span class="sc">/</span> <span class="fu">length</span>(.x)))</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code># A tibble: 2 × 4
+  country      age weight volume
+  &lt;chr&gt;      &lt;dbl&gt;  &lt;dbl&gt;  &lt;dbl&gt;
+1 Bangladesh 0.116  0.616  0.116
+2 Cambodia   0      0.002  0.254</code></pre>
+</div>
+</div>
+<p>Randomizing the rows of the dataframe:</p>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb59"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb59-1"><a href="#cb59-1" aria-hidden="true" tabindex="-1"></a>blood_volumes_randomized <span class="ot">&lt;-</span> blood_volumes[<span class="fu">sample</span>(<span class="fu">nrow</span>(blood_volumes)), ]</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<p>The function that plot variables of the randomized dataframe:</p>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb60"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb60-1"><a href="#cb60-1" aria-hidden="true" tabindex="-1"></a>colors <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">4</span>)[<span class="fu">factor</span>(blood_volumes_randomized<span class="sc">$</span>country)]</span>
+<span id="cb60-2"><a href="#cb60-2" aria-hidden="true" tabindex="-1"></a>units <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="at">age =</span> <span class="st">"(years)"</span>, <span class="at">weight =</span> <span class="st">"(kg)"</span>, <span class="at">volume =</span> <span class="st">"(mL)"</span>)</span>
+<span id="cb60-3"><a href="#cb60-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb60-4"><a href="#cb60-4" aria-hidden="true" tabindex="-1"></a>plot2 <span class="ot">&lt;-</span> <span class="cf">function</span>(x, y, ...) {</span>
+<span id="cb60-5"><a href="#cb60-5" aria-hidden="true" tabindex="-1"></a>  x <span class="ot">&lt;-</span> <span class="fu">substitute</span>(x)</span>
+<span id="cb60-6"><a href="#cb60-6" aria-hidden="true" tabindex="-1"></a>  y <span class="ot">&lt;-</span> <span class="fu">substitute</span>(y)</span>
+<span id="cb60-7"><a href="#cb60-7" aria-hidden="true" tabindex="-1"></a>  x_val <span class="ot">&lt;-</span> <span class="fu">deparse</span>(x)</span>
+<span id="cb60-8"><a href="#cb60-8" aria-hidden="true" tabindex="-1"></a>  y_val <span class="ot">&lt;-</span> <span class="fu">deparse</span>(y)</span>
+<span id="cb60-9"><a href="#cb60-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">plot</span>(<span class="fu">eval</span>(x, blood_volumes_randomized),</span>
+<span id="cb60-10"><a href="#cb60-10" aria-hidden="true" tabindex="-1"></a>       <span class="fu">eval</span>(y, blood_volumes_randomized), <span class="at">col =</span> colors,</span>
+<span id="cb60-11"><a href="#cb60-11" aria-hidden="true" tabindex="-1"></a>       <span class="at">xlab =</span> <span class="fu">paste</span>(x_val, units[x_val]), <span class="at">ylab =</span> <span class="fu">paste</span>(y_val, units[y_val]), ...)</span>
+<span id="cb60-12"><a href="#cb60-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">legend</span>(<span class="st">"bottomright"</span>, <span class="at">pch =</span> <span class="dv">1</span>, <span class="at">col =</span> <span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">4</span>), <span class="at">bty =</span> <span class="st">"n"</span>,</span>
+<span id="cb60-13"><a href="#cb60-13" aria-hidden="true" tabindex="-1"></a>         <span class="at">legend =</span> <span class="fu">c</span>(<span class="st">"Bangladesh"</span>, <span class="st">"Cambodia"</span>))</span>
+<span id="cb60-14"><a href="#cb60-14" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<p>Weight as a function of age:</p>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb61"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a><span class="fu">plot2</span>(age, weight)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="classification_files/figure-html/unnamed-chunk-50-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+</div>
+<p>Volume as a function of age:</p>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb62"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb62-1"><a href="#cb62-1" aria-hidden="true" tabindex="-1"></a><span class="fu">plot2</span>(age, volume)</span>
+<span id="cb62-2"><a href="#cb62-2" aria-hidden="true" tabindex="-1"></a><span class="fu">abline</span>(<span class="at">v =</span> <span class="dv">20</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="classification_files/figure-html/unnamed-chunk-51-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+</div>
+<p>Volume as a function of weight:</p>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb63"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb63-1"><a href="#cb63-1" aria-hidden="true" tabindex="-1"></a><span class="fu">plot2</span>(weight, volume)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="classification_files/figure-html/unnamed-chunk-52-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+</div>
+<p>The distribution of ages in Cambodia and Bangladesh:</p>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb64"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb64-1"><a href="#cb64-1" aria-hidden="true" tabindex="-1"></a>alpha <span class="ot">&lt;-</span> .<span class="dv">3</span></span>
+<span id="cb64-2"><a href="#cb64-2" aria-hidden="true" tabindex="-1"></a>breaks <span class="ot">&lt;-</span> <span class="dv">0</span><span class="sc">:</span><span class="dv">90</span></span>
+<span id="cb64-3"><a href="#cb64-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-4"><a href="#cb64-4" aria-hidden="true" tabindex="-1"></a>add_legend <span class="ot">&lt;-</span> <span class="cf">function</span>() {</span>
+<span id="cb64-5"><a href="#cb64-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">legend</span>(<span class="st">"topright"</span>, <span class="at">fill =</span> <span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">4</span>), <span class="at">bty =</span> <span class="st">"n"</span>,</span>
+<span id="cb64-6"><a href="#cb64-6" aria-hidden="true" tabindex="-1"></a>         <span class="at">legend =</span> <span class="fu">c</span>(<span class="st">"Bangladesh"</span>, <span class="st">"Cambodia"</span>))</span>
+<span id="cb64-7"><a href="#cb64-7" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb64-8"><a href="#cb64-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-9"><a href="#cb64-9" aria-hidden="true" tabindex="-1"></a>blood_volumes <span class="sc">|&gt;</span> </span>
+<span id="cb64-10"><a href="#cb64-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(country <span class="sc">==</span> <span class="st">"Cambodia"</span>) <span class="sc">|&gt;</span> </span>
+<span id="cb64-11"><a href="#cb64-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">pull</span>(age) <span class="sc">|&gt;</span> </span>
+<span id="cb64-12"><a href="#cb64-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">hist</span>(breaks, <span class="at">main =</span> <span class="cn">NA</span>, <span class="at">xlab =</span> <span class="st">"age (years)"</span>, <span class="at">ylab =</span> <span class="st">"number of samples"</span>,</span>
+<span id="cb64-13"><a href="#cb64-13" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="dv">4</span>, alpha))</span>
+<span id="cb64-14"><a href="#cb64-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-15"><a href="#cb64-15" aria-hidden="true" tabindex="-1"></a>blood_volumes <span class="sc">|&gt;</span> </span>
+<span id="cb64-16"><a href="#cb64-16" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(country <span class="sc">==</span> <span class="st">"Bangladesh"</span>) <span class="sc">|&gt;</span> </span>
+<span id="cb64-17"><a href="#cb64-17" aria-hidden="true" tabindex="-1"></a>  <span class="fu">pull</span>(age) <span class="sc">|&gt;</span></span>
+<span id="cb64-18"><a href="#cb64-18" aria-hidden="true" tabindex="-1"></a>  <span class="fu">hist</span>(breaks, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="dv">2</span>, alpha), <span class="at">na.rm =</span> <span class="cn">TRUE</span>, <span class="at">add =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb64-19"><a href="#cb64-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-20"><a href="#cb64-20" aria-hidden="true" tabindex="-1"></a><span class="fu">add_legend</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="classification_files/figure-html/unnamed-chunk-53-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+</div>
+<p>The distribution of volume values in Cambodia and Bangladesh:</p>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb65"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb65-1"><a href="#cb65-1" aria-hidden="true" tabindex="-1"></a>breaks <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="dv">0</span>, <span class="dv">16</span>, .<span class="dv">5</span>)</span>
+<span id="cb65-2"><a href="#cb65-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb65-3"><a href="#cb65-3" aria-hidden="true" tabindex="-1"></a>blood_volumes <span class="sc">|&gt;</span> </span>
+<span id="cb65-4"><a href="#cb65-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(country <span class="sc">==</span> <span class="st">"Cambodia"</span>) <span class="sc">|&gt;</span> </span>
+<span id="cb65-5"><a href="#cb65-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">pull</span>(volume) <span class="sc">|&gt;</span> </span>
+<span id="cb65-6"><a href="#cb65-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">hist</span>(breaks, <span class="at">main =</span> <span class="cn">NA</span>, <span class="at">xlab =</span> <span class="st">"volume (mL)"</span>, <span class="at">ylab =</span> <span class="st">"number of samples"</span>,</span>
+<span id="cb65-7"><a href="#cb65-7" aria-hidden="true" tabindex="-1"></a>       <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="dv">4</span>, alpha))</span>
+<span id="cb65-8"><a href="#cb65-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb65-9"><a href="#cb65-9" aria-hidden="true" tabindex="-1"></a>blood_volumes <span class="sc">|&gt;</span> </span>
+<span id="cb65-10"><a href="#cb65-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(country <span class="sc">==</span> <span class="st">"Bangladesh"</span>) <span class="sc">|&gt;</span> </span>
+<span id="cb65-11"><a href="#cb65-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">pull</span>(volume) <span class="sc">|&gt;</span> </span>
+<span id="cb65-12"><a href="#cb65-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">hist</span>(breaks, <span class="at">col =</span> <span class="fu">adjustcolor</span>(<span class="dv">2</span>, alpha), <span class="at">na.rm =</span> <span class="cn">TRUE</span>, <span class="at">add =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb65-13"><a href="#cb65-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb65-14"><a href="#cb65-14" aria-hidden="true" tabindex="-1"></a><span class="fu">add_legend</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="classification_files/figure-html/unnamed-chunk-54-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+</div>
+<p>Model:</p>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb66"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb66-1"><a href="#cb66-1" aria-hidden="true" tabindex="-1"></a>model <span class="ot">&lt;-</span> blood_volumes <span class="sc">|&gt;</span> </span>
+<span id="cb66-2"><a href="#cb66-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(country <span class="sc">==</span> <span class="st">"Bangladesh"</span>) <span class="sc">|&gt;</span> </span>
+<span id="cb66-3"><a href="#cb66-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(<span class="sc">-</span>weight, <span class="sc">-</span>country) <span class="sc">|&gt;</span> </span>
+<span id="cb66-4"><a href="#cb66-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">na.exclude</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb66-5"><a href="#cb66-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">with</span>(<span class="fu">glm</span>(culture <span class="sc">~</span> volume, binomial))</span>
+<span id="cb66-6"><a href="#cb66-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb66-7"><a href="#cb66-7" aria-hidden="true" tabindex="-1"></a><span class="fu">anova</span>(model)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Analysis of Deviance Table
+
+Model: binomial, link: logit
+
+Response: culture
+
+Terms added sequentially (first to last)
+
+       Df Deviance Resid. Df Resid. Dev Pr(&gt;Chi)
+NULL                     303     293.41         
+volume  1   1.6186       302     291.79   0.2033</code></pre>
+</div>
+</div>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb68"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb68-1"><a href="#cb68-1" aria-hidden="true" tabindex="-1"></a>processed <span class="ot">&lt;-</span> blood_volumes <span class="sc">|&gt;</span> </span>
+<span id="cb68-2"><a href="#cb68-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(country <span class="sc">==</span> <span class="st">"Bangladesh"</span>) <span class="sc">|&gt;</span> </span>
+<span id="cb68-3"><a href="#cb68-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(volume, culture) <span class="sc">|&gt;</span> </span>
+<span id="cb68-4"><a href="#cb68-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">na.exclude</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb68-5"><a href="#cb68-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">vol_cat =</span> <span class="fu">cut</span>(volume, <span class="fu">quantile</span>(volume, <span class="fu">seq</span>(<span class="dv">0</span>, <span class="dv">1</span>, .<span class="dv">1</span>)),</span>
+<span id="cb68-6"><a href="#cb68-6" aria-hidden="true" tabindex="-1"></a>                       <span class="at">include.lowest =</span> <span class="cn">TRUE</span>)) <span class="sc">|&gt;</span></span>
+<span id="cb68-7"><a href="#cb68-7" aria-hidden="true" tabindex="-1"></a>  tidyr<span class="sc">::</span><span class="fu">separate</span>(vol_cat, <span class="fu">c</span>(<span class="st">"vol_lower"</span>, <span class="st">"vol_upper"</span>), <span class="st">","</span>) <span class="sc">|&gt;</span> </span>
+<span id="cb68-8"><a href="#cb68-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="fu">across</span>(<span class="fu">starts_with</span>(<span class="st">"vol_"</span>), <span class="sc">~</span> .x <span class="sc">|&gt;</span></span>
+<span id="cb68-9"><a href="#cb68-9" aria-hidden="true" tabindex="-1"></a>                  stringr<span class="sc">::</span><span class="fu">str_remove</span>(<span class="st">"</span><span class="sc">\\</span><span class="st">(|</span><span class="sc">\\</span><span class="st">[|</span><span class="sc">\\</span><span class="st">]"</span>) <span class="sc">|&gt;</span></span>
+<span id="cb68-10"><a href="#cb68-10" aria-hidden="true" tabindex="-1"></a>                  <span class="fu">as.numeric</span>())) <span class="sc">|&gt;</span> </span>
+<span id="cb68-11"><a href="#cb68-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">rowwise</span>() <span class="sc">|&gt;</span> </span>
+<span id="cb68-12"><a href="#cb68-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">vol_mean =</span> <span class="fu">mean</span>(<span class="fu">c</span>(vol_lower, vol_upper))) <span class="sc">|&gt;</span> </span>
+<span id="cb68-13"><a href="#cb68-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ungroup</span>() <span class="sc">|&gt;</span></span>
+<span id="cb68-14"><a href="#cb68-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(vol_mean) <span class="sc">|&gt;</span> </span>
+<span id="cb68-15"><a href="#cb68-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">prop     =</span> <span class="fu">list</span>(<span class="fu">prop.test</span>(<span class="fu">sum</span>(culture), <span class="fu">length</span>(culture))),</span>
+<span id="cb68-16"><a href="#cb68-16" aria-hidden="true" tabindex="-1"></a>         <span class="at">cult_est =</span> purrr<span class="sc">::</span><span class="fu">map_dbl</span>(prop, <span class="sc">~</span> .x<span class="sc">$</span>estimate),</span>
+<span id="cb68-17"><a href="#cb68-17" aria-hidden="true" tabindex="-1"></a>         <span class="at">confint  =</span> purrr<span class="sc">::</span><span class="fu">map</span>(prop, <span class="sc">~</span> <span class="fu">setNames</span>(.x<span class="sc">$</span>conf.int,</span>
+<span id="cb68-18"><a href="#cb68-18" aria-hidden="true" tabindex="-1"></a>                                                <span class="fu">c</span>(<span class="st">"cult_lower"</span>, <span class="st">"cult_upper"</span>)))) <span class="sc">|&gt;</span> </span>
+<span id="cb68-19"><a href="#cb68-19" aria-hidden="true" tabindex="-1"></a>  tidyr<span class="sc">::</span><span class="fu">unnest_wider</span>(confint)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<div class="cell" data-layout-align="center">
+<div class="sourceCode cell-code" id="cb69"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb69-1"><a href="#cb69-1" aria-hidden="true" tabindex="-1"></a><span class="fu">with</span>(processed, {</span>
+<span id="cb69-2"><a href="#cb69-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">plot</span>(<span class="cn">NA</span>, <span class="at">xlim =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="fu">max</span>(vol_upper)), <span class="at">ylim =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="fu">max</span>(cult_upper)),</span>
+<span id="cb69-3"><a href="#cb69-3" aria-hidden="true" tabindex="-1"></a>       <span class="at">xlab =</span> <span class="st">"volume (mL)"</span>, <span class="at">ylab =</span> <span class="st">"probability of culture positive"</span>)</span>
+<span id="cb69-4"><a href="#cb69-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">arrows</span>(vol_mean, cult_lower, vol_mean, cult_upper, .<span class="dv">1</span>, <span class="dv">90</span>, <span class="dv">3</span>, <span class="at">col =</span> <span class="dv">2</span>, <span class="at">lwd =</span> <span class="dv">2</span>)</span>
+<span id="cb69-5"><a href="#cb69-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">points</span>(vol_mean, cult_est, <span class="at">col =</span> <span class="dv">2</span>, <span class="at">pch =</span> <span class="dv">19</span>)</span>
+<span id="cb69-6"><a href="#cb69-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">abline</span>(<span class="at">v =</span> <span class="fu">unique</span>(<span class="fu">c</span>(vol_lower, vol_upper)), <span class="at">lty =</span> <span class="dv">2</span>, <span class="at">col =</span> <span class="st">"grey"</span>)</span>
+<span id="cb69-7"><a href="#cb69-7" aria-hidden="true" tabindex="-1"></a>})</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="classification_files/figure-html/unnamed-chunk-57-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672"></p>
 </figure>
 </div>
 </div>

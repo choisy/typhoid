@@ -54,7 +54,7 @@ saveRDS2 <- function(object, file) saveRDS(object, make_path(file))
 ```
 
 
-## Package
+## Packages
 
 Required packages:
 
@@ -482,7 +482,7 @@ volumes_bangladesh |>
 ```{r}
 mod1 <- glm(BC_result ~ BC_Vol, binomial, volumes_bangladesh)
 xs <- seq(0, 16, le = 512)
-pred <- predict(mod, data.frame(BC_Vol = xs), type = "response", se = TRUE)
+pred <- predict(mod1, data.frame(BC_Vol = xs), type = "response", se = TRUE)
 plot(xs, pred$fit, type = "l", ylim = c(0, .3))
 lines(xs, pred$fit - 1.96 * pred$se.fit, lty = 2)
 lines(xs, pred$fit + 1.96 * pred$se.fit, lty = 2)
@@ -491,7 +491,7 @@ lines(xs, pred$fit + 1.96 * pred$se.fit, lty = 2)
 ```{r}
 mod2 <- glm(BC_result ~ BC_Vol + I(BC_Vol^2), binomial, volumes_bangladesh)
 xs <- seq(0, 16, le = 512)
-pred <- predict(mod, data.frame(BC_Vol = xs), type = "response", se = TRUE)
+pred <- predict(mod2, data.frame(BC_Vol = xs), type = "response", se = TRUE)
 plot(xs, pred$fit, type = "l", ylim = c(0, .3))
 lines(xs, pred$fit - 1.96 * pred$se.fit, lty = 2)
 lines(xs, pred$fit + 1.96 * pred$se.fit, lty = 2)
@@ -529,6 +529,176 @@ polygon(c(xs, rev(xs)),
 lines(xs, pred_gam$fit, col = 4, lwd = 2)
 
 abline(v = 6.6, lwd = 2, col = 3)
+```
+
+
+
+
+
+
+
+
+## Blood volumes 2
+
+Reading the data:
+
+```{r}
+bv_bangladesh <- read_clean_data("bv_bangladesh.rds")
+bv_cambodia <- read_clean_data("bv_cambodia.rds")
+```
+
+Combining the data:
+
+```{r}
+blood_volumes <- bind_rows(bv_bangladesh, bv_cambodia, .id = "country") |> 
+  mutate(across(country, ~ c("Bangladesh", "Cambodia")[as.numeric(.x)]))
+```
+
+The percentage of missing values per variable and country:
+
+```{r}
+blood_volumes |> 
+  group_by(country) |> 
+  summarise(across(c(age, weight, volume), ~ sum(is.na(.x)) / length(.x)))
+```
+
+Randomizing the rows of the dataframe:
+
+```{r}
+blood_volumes_randomized <- blood_volumes[sample(nrow(blood_volumes)), ]
+```
+
+The function that plot variables of the randomized dataframe:
+
+```{r}
+colors <- c(2, 4)[factor(blood_volumes_randomized$country)]
+units <- c(age = "(years)", weight = "(kg)", volume = "(mL)")
+
+plot2 <- function(x, y, ...) {
+  x <- substitute(x)
+  y <- substitute(y)
+  x_val <- deparse(x)
+  y_val <- deparse(y)
+  plot(eval(x, blood_volumes_randomized),
+       eval(y, blood_volumes_randomized), col = colors,
+       xlab = paste(x_val, units[x_val]), ylab = paste(y_val, units[y_val]), ...)
+  legend("bottomright", pch = 1, col = c(2, 4), bty = "n",
+         legend = c("Bangladesh", "Cambodia"))
+}
+```
+
+Weight as a function of age:
+
+```{r}
+plot2(age, weight)
+```
+
+Volume as a function of age:
+
+```{r}
+plot2(age, volume)
+abline(v = 20)
+```
+
+Volume as a function of weight:
+
+```{r}
+plot2(weight, volume)
+```
+
+The distribution of ages in Cambodia and Bangladesh:
+
+```{r}
+alpha <- .3
+breaks <- 0:90
+
+add_legend <- function() {
+  legend("topright", fill = c(2, 4), bty = "n",
+         legend = c("Bangladesh", "Cambodia"))
+}
+
+blood_volumes |> 
+  filter(country == "Cambodia") |> 
+  pull(age) |> 
+  hist(breaks, main = NA, xlab = "age (years)", ylab = "number of samples",
+       col = adjustcolor(4, alpha))
+
+blood_volumes |> 
+  filter(country == "Bangladesh") |> 
+  pull(age) |>
+  hist(breaks, col = adjustcolor(2, alpha), na.rm = TRUE, add = TRUE)
+
+add_legend()
+```
+
+The distribution of volume values in Cambodia and Bangladesh:
+
+```{r}
+breaks <- seq(0, 16, .5)
+
+blood_volumes |> 
+  filter(country == "Cambodia") |> 
+  pull(volume) |> 
+  hist(breaks, main = NA, xlab = "volume (mL)", ylab = "number of samples",
+       col = adjustcolor(4, alpha))
+
+blood_volumes |> 
+  filter(country == "Bangladesh") |> 
+  pull(volume) |> 
+  hist(breaks, col = adjustcolor(2, alpha), na.rm = TRUE, add = TRUE)
+
+add_legend()
+```
+
+Model:
+
+```{r}
+model <- blood_volumes |> 
+  filter(country == "Bangladesh") |> 
+  select(-weight, -country) |> 
+  na.exclude() |> 
+  with(glm(culture ~ age * volume, binomial))
+
+anova(model)
+```
+
+```{r}
+processed <- blood_volumes |> 
+  filter(country == "Bangladesh") |> 
+  select(volume, culture) |> 
+  na.exclude() |> 
+  mutate(vol_cat = cut(volume, quantile(volume, seq(0, 1, .1)),
+                       include.lowest = TRUE)) |>
+  tidyr::separate(vol_cat, c("vol_lower", "vol_upper"), ",") |> 
+  mutate(across(starts_with("vol_"), ~ .x |>
+                  stringr::str_remove("\\(|\\[|\\]") |>
+                  as.numeric())) |> 
+  rowwise() |> 
+  mutate(vol_mean = mean(c(vol_lower, vol_upper))) |> 
+  ungroup() |>
+  group_by(vol_mean) |> 
+  mutate(prop     = list(prop.test(sum(culture), length(culture))),
+         cult_est = purrr::map_dbl(prop, ~ .x$estimate),
+         confint  = purrr::map(prop, ~ setNames(.x$conf.int,
+                                                c("cult_lower", "cult_upper")))) |> 
+  tidyr::unnest_wider(confint)
+```
+
+```{r}
+with(processed, {
+  plot(NA, xlim = c(0, max(vol_upper)), ylim = c(0, max(cult_upper)),
+       xlab = "volume (mL)", ylab = "probability of culture positive")
+  arrows(vol_mean, cult_lower, vol_mean, cult_upper, .1, 90, 3, col = 2, lwd = 2)
+  points(vol_mean, cult_est, col = 2, pch = 19)
+  abline(v = unique(c(vol_lower, vol_upper)), lty = 2, col = "grey")
+})
+```
+
+
+```{r}
+blood_volumes |> 
+  filter(country == "Bangladesh") |> 
+  select(age, culture)
 ```
 
 
