@@ -1,0 +1,264 @@
+---
+title: "Manuscript analyses"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Global parameters
+
+The path to the data:
+
+```{r}
+data_path <- paste0(Sys.getenv("HOME"), "/Library/CloudStorage/",
+                    "OneDrive-OxfordUniversityClinicalResearchUnit/",
+                    "GitHub/choisy/typhoid/")
+```
+
+```{r include = FALSE}
+make_path <- function(x) paste0(data_path, "cache/", x)
+file_exists <- function(x) file.exists(make_path(x))
+readRDS2 <- function(x) readRDS(make_path(x))
+saveRDS2 <- function(object, file) saveRDS(object, make_path(file))
+```
+
+## Packages
+
+```{r message = FALSE}
+library(dplyr)
+library(purrr)
+library(magrittr)
+library(car)
+```
+
+
+## Utilitary functions
+
+A function that reads a clean data set:
+
+```{r}
+read_clean_data <- function(file) readRDS(paste0(data_path, "clean_data/", file))
+```
+
+A function that selects the positive values of a vector:
+
+```{r}
+get_greater_than <- function(x, t) x[x > t]
+get_lower_than <- function(x, t) x[x < t]
+```
+
+Sensitivity and specificity:
+
+```{r}
+sensitivity <- function(x) x[2, 2] / (x[2, 2] + x[2, 1])
+specificity <- function(x) x[1, 1] / (x[1, 1] + x[1, 2])
+ppv <- function(x) x[2, 2] / (x[1, 2] + x[2, 2])
+```
+
+
+## Reading the clean data
+
+The Nepal dataset:
+
+```{r}
+nepal <- "nepal.rds" |> 
+  read_clean_data() |> 
+  mutate(across(c(cough, diarrhea, vomiting, abdominal_pain, constipation, headache),
+                as.logical),
+         across(c(age, platelets), as.numeric)) |> 
+  select(-starts_with("score"))
+```
+
+The Cambodia and Bangladesh dataset:
+
+```{r}
+cambodia_bangladesh <- "cambodia_bangladesh.rds" |> 
+  read_clean_data() |> 
+#  mutate(across(fever, ~ .x > 2),
+#         across(where(is.logical), logical2factor)) |> 
+  select(-country) |> 
+  select(-fever) |> 
+  na.exclude()
+```
+
+
+## Analyses
+
+Number of missing values:
+
+```{r}
+nepal |> 
+  map_int(~ sum(is.na(.x))) |> 
+  get_greater_than(0)
+```
+
+Number of negative and positive cultures:
+
+```{r}
+nepal |> 
+  pull(culture) |> 
+  table()
+```
+
+Quantiles of age:  
+
+```{r}
+nepal |> 
+  pull(age) |> 
+  quantile(na.rm = TRUE)
+```
+
+Quantiles of fever duration:  
+
+```{r}
+nepal |> 
+  pull(fever) |> 
+  quantile(na.rm = TRUE)
+```
+
+Uni-variable logistic regressions:
+
+```{r}
+map_dbl(nepal[-1],
+        ~ glm(nepal$culture ~ .x, binomial) |>
+          summary() |> 
+          coef() |> 
+          extract(2, 4)) |> 
+  get_lower_than(.05)
+```
+
+Multivariable logistic regression:
+
+```{r}
+(multi <- glm(culture ~ headache + abdominal_pain + diarrhea + cough, binomial, nepal))
+```
+
+```{r}
+Anova(multi)
+```
+
+Computing the score:
+
+```{r}
+nepal %<>% mutate(score = headache + abdominal_pain + diarrhea + ! cough)
+```
+
+The values of the score:
+
+```{r}
+table(nepal$score)
+```
+
+```{r}
+tmp <- nepal |> 
+  mutate(score0 = score < 1) |> 
+  with(table(culture, score0))
+
+tmp
+ppv(tmp)
+```
+
+```{r}
+tmp <- nepal |> 
+  mutate(score1 = score >= 1) |> 
+  with(table(culture, score1))
+
+tmp
+ppv(tmp)
+```
+
+```{r}
+tmp <- nepal |> 
+  mutate(score1_CRP = score >= 1 & CRP > "<10") |> 
+  with(table(culture, score1_CRP))
+
+tmp
+ppv(tmp)
+```
+
+```{r}
+tmp <- nepal |> 
+  mutate(score1_IgM = score >= 1 & IgM > 0) |> 
+  with(table(culture, score1_IgM))
+
+tmp
+ppv(tmp)
+```
+
+```{r}
+tmp <- nepal |> 
+  mutate(score1_CRP_IgM = score >= 1 & IgM > 0 & CRP != "<10") |> 
+  with(table(culture, score1_CRP_IgM))
+
+tmp
+ppv(tmp)
+```
+
+```{r}
+score_mat1 <- map(1:4,
+                  ~ nepal |> 
+                    mutate(score1 = score >= .x) |> 
+                    with(table(culture, score1)))
+
+map_dbl(score_mat1, ppv)
+(sens1 <- map_dbl(score_mat1, sensitivity))
+(spec1 <- map_dbl(score_mat1, specificity))
+```
+
+```{r}
+score_mat2 <- map(1:4,
+                  ~ nepal |> 
+                    mutate(score1 = score >= .x & CRP > "<10") |> 
+                    with(table(culture, score1)))
+
+map_dbl(score_mat2, ppv)
+(sens2 <- map_dbl(score_mat2, sensitivity))
+(spec2 <- map_dbl(score_mat2, specificity))
+```
+
+```{r}
+score_mat3 <- map(1:4,
+                  ~ nepal |> 
+                    mutate(score1 = score >= .x & IgM > 0) |> 
+                    with(table(culture, score1)))
+
+map_dbl(score_mat3, ppv)
+(sens3 <- map_dbl(score_mat3, sensitivity))
+(spec3 <- map_dbl(score_mat3, specificity))
+```
+
+```{r}
+score_mat4 <- map(1:4,
+                  ~ nepal |> 
+                    mutate(score1 = score >= .x & IgM > 0 & CRP != "<10") |> 
+                    with(table(culture, score1)))
+
+map_dbl(score_mat4, ppv)
+(sens4 <- map_dbl(score_mat4, sensitivity))
+(spec4 <- map_dbl(score_mat4, specificity))
+```
+
+```{r}
+score_CRP_mat <- expand.grid(1:4, 1:3) |> 
+  with(map2(Var1, Var2,
+            ~ nepal |>
+              mutate(score1_CRP = score >= .x & as.numeric(CRP) > .y) |> 
+              with(table(culture, score1_CRP))))
+
+matrix(map_dbl(score_CRP_mat, ppv), 4)
+matrix(map_dbl(score_CRP_mat, sensitivity), 4)
+```
+
+```{r}
+opar <- par(pty = "s")
+plot(1 - spec1, sens1, type = "o", xlim = 0:1, ylim = 0:1, col = 1, asp = 1,
+     xaxs = "i", yaxs = "i", xlab = "1 - specificity", ylab = "sensitivity")
+lines(1 - spec2, sens2, type = "o", col = 2)
+lines(1 - spec3, sens3, type = "o", col = 3)
+lines(1 - spec4, sens4, type = "o", col = 4)
+box(bty = "o")
+abline(0, 1)
+par(opar)
+```
+
