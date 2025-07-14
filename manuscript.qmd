@@ -1,6 +1,10 @@
 ---
-title: "Manuscript analyses"
-format: html
+title: "Clinical algorithm combining a symptom score with rapid diagnostic tests"
+format:
+  html:
+    toc: true
+    toc-depth: 4
+    toc-expand: true
 editor: visual
 editor_options: 
   chunk_output_type: console
@@ -25,11 +29,27 @@ saveRDS2 <- function(object, file) saveRDS(object, make_path(file))
 
 ## Packages
 
+Required packages:
+
+```{r}
+required_packages <- c("dplyr", "purrr", "magrittr", "car", "yardstick")
+```
+
+Installing those that are not installed:
+
+```{r}
+to_inst <- required_packages[! required_packages %in% installed.packages()[,"Package"]]
+if (length(to_inst)) install.packages(to_inst)
+```
+
+Loading packages for interactive use:
+
 ```{r message = FALSE}
 library(dplyr)
 library(purrr)
 library(magrittr)
 library(car)
+library(yardstick)
 ```
 
 
@@ -41,19 +61,41 @@ A function that reads a clean data set:
 read_clean_data <- function(file) readRDS(paste0(data_path, "clean_data/", file))
 ```
 
-A function that selects the positive values of a vector:
+A function that transforms a logical vector into a factor vector (with the correct
+number of levels):
+
+```{r}
+logical2factor <- function(x) factor(x, c("FALSE", "TRUE"))
+```
+
+Function that select values of a vector above or below a threshold:
 
 ```{r}
 get_greater_than <- function(x, t) x[x > t]
 get_lower_than <- function(x, t) x[x < t]
 ```
 
-Sensitivity and specificity:
+A function that identifies the significant univariate logistic regression. This
+requires the response to be the first column of the inputed data frame `x`:
 
 ```{r}
-sensitivity <- function(x) x[2, 2] / (x[2, 2] + x[2, 1])
-specificity <- function(x) x[1, 1] / (x[1, 1] + x[1, 2])
-ppv <- function(x) x[2, 2] / (x[1, 2] + x[2, 2])
+sign_uni_log <- function(x) {
+  map_dbl(x[-1],
+          ~ glm(x[[1]] ~ .x, binomial) |>
+            summary() |> 
+            coef() |> 
+            extract(2, 4)) |> 
+    get_lower_than(.05)
+}
+```
+
+A function that computes AUC from vectors of sensitivity and specificity values:
+
+```{r}
+AUC <- function(spec, sens) {
+  spec <- 1 - spec
+  .5 + .5 * abs(sum(spec * c(sens[-1], sens[1])) - sum(sens * c(spec[-1], spec[1])))
+}
 ```
 
 
@@ -75,15 +117,13 @@ The Cambodia and Bangladesh dataset:
 ```{r}
 cambodia_bangladesh <- "cambodia_bangladesh.rds" |> 
   read_clean_data() |> 
-#  mutate(across(fever, ~ .x > 2),
-#         across(where(is.logical), logical2factor)) |> 
-  select(-country) |> 
-  select(-fever) |> 
-  na.exclude()
+  select(-country)
 ```
 
 
-## Analyses
+## Analyses of the manuscript
+
+### Nepal
 
 Number of missing values:
 
@@ -117,15 +157,10 @@ nepal |>
   quantile(na.rm = TRUE)
 ```
 
-Uni-variable logistic regressions:
+Significant uni-variable logistic regressions:
 
 ```{r}
-map_dbl(nepal[-1],
-        ~ glm(nepal$culture ~ .x, binomial) |>
-          summary() |> 
-          coef() |> 
-          extract(2, 4)) |> 
-  get_lower_than(.05)
+sign_uni_log(nepal)
 ```
 
 Multivariable logistic regression:
@@ -134,131 +169,280 @@ Multivariable logistic regression:
 (multi <- glm(culture ~ headache + abdominal_pain + diarrhea + cough, binomial, nepal))
 ```
 
+Type-II (i.e. correcting for potential confounding effects) significance levels:
+
 ```{r}
 Anova(multi)
 ```
 
-Computing the score:
+Computing the clinical score values:
 
 ```{r}
-nepal %<>% mutate(score = headache + abdominal_pain + diarrhea + ! cough)
+compute_CS <- function(x) {
+  mutate(x, score = headache + abdominal_pain + diarrhea + ! cough)
+}
+
+nepal %<>% compute_CS()
 ```
 
-The values of the score:
+The values of the scores:
 
 ```{r}
 table(nepal$score)
 ```
 
-```{r}
-tmp <- nepal |> 
-  mutate(score0 = score < 1) |> 
-  with(table(culture, score0))
-
-tmp
-ppv(tmp)
-```
+A few useful functions for metrics computation:
 
 ```{r}
-tmp <- nepal |> 
-  mutate(score1 = score >= 1) |> 
-  with(table(culture, score1))
+test_score0 <- function(x) {
+ tmp <- x |> 
+   mutate(score = score < 1,
+          across(c(culture, score), logical2factor))
+ 
+ list(conf_mat(tmp, culture, score),
+      npv(tmp, culture, score))
+}
 
-tmp
-ppv(tmp)
+test_score1 <- function(x) {
+ tmp <- x |> 
+   mutate(score = score >= 1,
+          across(c(culture, score), logical2factor))
+ 
+ list(conf_mat(tmp, culture, score),
+      npv(tmp, culture, score))
+}
+
+test_score_CRP <- function(x) {
+ tmp <- x |> 
+   mutate(score = score >= 1 & CRP > "<10",
+          across(c(culture, score), logical2factor))
+ 
+ list(conf_mat(tmp, culture, score),
+      npv(tmp, culture, score))
+}
+
+test_score_IgM <- function(x) {
+ tmp <- x |> 
+   mutate(score = score >= 1 & IgM > 0,
+          across(c(culture, score), logical2factor))
+ 
+ list(conf_mat(tmp, culture, score),
+      npv(tmp, culture, score))
+}
+
+test_score_IgM_CRP <- function(x) {
+ tmp <- x |> 
+   mutate(score = score >= 1 & IgM > 0 & CRP > "<10",
+          across(c(culture, score), logical2factor))
+ 
+ list(conf_mat(tmp, culture, score),
+      npv(tmp, culture, score))
+}
 ```
+
+If the score was zero only 2/30 (6.7%) participants had blood culture confirmed enteric
+fever:
 
 ```{r}
-tmp <- nepal |> 
-  mutate(score1_CRP = score >= 1 & CRP > "<10") |> 
-  with(table(culture, score1_CRP))
-
-tmp
-ppv(tmp)
+test_score0(nepal)
 ```
+
+If the score was one or more the proportion was 172/573 (30.0%):
 
 ```{r}
-tmp <- nepal |> 
-  mutate(score1_IgM = score >= 1 & IgM > 0) |> 
-  with(table(culture, score1_IgM))
-
-tmp
-ppv(tmp)
+test_score1(nepal)
 ```
+
+Combining a symptom score of one or more with a CRP ≥ 10 mg/L increased the proportion
+with blood culture confirmed enteric fever to 169/525 (32.2%):
 
 ```{r}
-tmp <- nepal |> 
-  mutate(score1_CRP_IgM = score >= 1 & IgM > 0 & CRP != "<10") |> 
-  with(table(culture, score1_CRP_IgM))
-
-tmp
-ppv(tmp)
+test_score_CRP(nepal)
 ```
+
+... a positive IgMLFA to 112/189 (59.3%):
 
 ```{r}
-score_mat1 <- map(1:4,
-                  ~ nepal |> 
-                    mutate(score1 = score >= .x) |> 
-                    with(table(culture, score1)))
-
-map_dbl(score_mat1, ppv)
-(sens1 <- map_dbl(score_mat1, sensitivity))
-(spec1 <- map_dbl(score_mat1, specificity))
+test_score_IgM(nepal)
 ```
+
+... and positive CRP ≥ 10 mg/L and a positive IgMLFA to 110/185 (59.5%):
 
 ```{r}
-score_mat2 <- map(1:4,
-                  ~ nepal |> 
-                    mutate(score1 = score >= .x & CRP > "<10") |> 
-                    with(table(culture, score1)))
-
-map_dbl(score_mat2, ppv)
-(sens2 <- map_dbl(score_mat2, sensitivity))
-(spec2 <- map_dbl(score_mat2, specificity))
+test_score_IgM_CRP(nepal)
 ```
+
+#### Figure 1
+
+A function that draws the ROC curve and computes the AUC values:
 
 ```{r}
-score_mat3 <- map(1:4,
-                  ~ nepal |> 
-                    mutate(score1 = score >= .x & IgM > 0) |> 
-                    with(table(culture, score1)))
+# function tuning:
+lines2 <- function(...) lines(..., type = "o", pch = 19, lwd = 2)
+abline2 <- function(...) abline(..., col = "grey")
 
-map_dbl(score_mat3, ppv)
-(sens3 <- map_dbl(score_mat3, sensitivity))
-(spec3 <- map_dbl(score_mat3, specificity))
+# ROC curve + AUC:
+roc_curve <- function(x) {
+# score only:
+  tmp <- map(0:5, ~ x |> 
+                    mutate(score = score >= .x,
+                           across(c(culture, score), logical2factor)))
+  
+  sensitivity_score1 <- tmp |>
+    map(sensitivity, culture, score) |> 
+    bind_rows() |> 
+    pull(.estimate)
+  
+  specificity_score1 <- tmp |>
+    map(specificity, culture, score) |> 
+    bind_rows() |> 
+    pull(.estimate)
+
+# score with IgM and CRP:
+  tmp <- map(0:6, ~ x |> 
+                    mutate(score = score + (IgM > 0 & CRP != "<10") >= .x,
+                           across(c(culture, score), logical2factor)))
+  
+  sensitivity_score2 <- tmp |>
+    map(sensitivity, culture, score) |> 
+    bind_rows() |> 
+    pull(.estimate)
+  
+  specificity_score2 <- tmp |>
+    map(specificity, culture, score) |> 
+    bind_rows() |> 
+    pull(.estimate)
+
+# ROC curve figure:
+  opar <- par(pty = "s")
+  ticks <- seq(0, 1, .2)
+  plot(NA, xlim = 0:1, ylim = 0:1, xlab = "1 - specificity", ylab = "sensitivity")
+  abline2(h = ticks); abline2(v = ticks)
+  abline(0, 1, lwd = 2, col = 3)
+  lines2(1 - specificity_score1, sensitivity_score1, col = 4)
+  lines2(1 - specificity_score2, sensitivity_score2, col = 2)
+  box(bty = "o")
+  par(opar)
+  
+# AUC values:
+  round(c(AUC(specificity_score1, sensitivity_score1),
+          AUC(specificity_score2, sensitivity_score2)), 3)
+}
 ```
+
+Applying the function to the Nepal dataset:
 
 ```{r}
-score_mat4 <- map(1:4,
-                  ~ nepal |> 
-                    mutate(score1 = score >= .x & IgM > 0 & CRP != "<10") |> 
-                    with(table(culture, score1)))
-
-map_dbl(score_mat4, ppv)
-(sens4 <- map_dbl(score_mat4, sensitivity))
-(spec4 <- map_dbl(score_mat4, specificity))
+roc_curve(nepal)
 ```
+
+
+### Cambodia and Bangladesh
+
+Number of observations:
 
 ```{r}
-score_CRP_mat <- expand.grid(1:4, 1:3) |> 
-  with(map2(Var1, Var2,
-            ~ nepal |>
-              mutate(score1_CRP = score >= .x & as.numeric(CRP) > .y) |> 
-              with(table(culture, score1_CRP))))
-
-matrix(map_dbl(score_CRP_mat, ppv), 4)
-matrix(map_dbl(score_CRP_mat, sensitivity), 4)
+nrow(cambodia_bangladesh)
 ```
+
+Quantiles of ages:
 
 ```{r}
-opar <- par(pty = "s")
-plot(1 - spec1, sens1, type = "o", xlim = 0:1, ylim = 0:1, col = 1, asp = 1,
-     xaxs = "i", yaxs = "i", xlab = "1 - specificity", ylab = "sensitivity")
-lines(1 - spec2, sens2, type = "o", col = 2)
-lines(1 - spec3, sens3, type = "o", col = 3)
-lines(1 - spec4, sens4, type = "o", col = 4)
-box(bty = "o")
-abline(0, 1)
-par(opar)
+quantile(cambodia_bangladesh$age)
 ```
+
+Quantiles of durations of fever:
+
+```{r}
+quantile(cambodia_bangladesh$fever)
+```
+
+Significant uni-variable logistic regressions:
+
+```{r}
+sign_uni_log(cambodia_bangladesh)
+```
+
+Age is not significant:
+
+```{r}
+summary(glm(culture ~ age, binomial, cambodia_bangladesh))
+```
+
+ALT is not significant:
+
+```{r}
+summary(glm(culture ~ ALT, binomial, cambodia_bangladesh))
+```
+
+Contingency table duration of fever and culture result:
+
+```{r}
+cambodia_bangladesh |> 
+  group_by(fever < 3, culture) |> 
+  tally()
+```
+
+Computing the clinical score values:
+
+```{r}
+cambodia_bangladesh2 <- cambodia_bangladesh |> 
+  filter(! fever < 3) |> 
+  compute_CS()
+```
+
+The values of the scores:
+
+```{r}
+table(cambodia_bangladesh2$score)
+```
+
+If the symptom score was zero only 1/80 (1.3%) participants had blood culture confirmed
+enteric fever:
+
+```{r}
+test_score0(cambodia_bangladesh2)
+```
+
+If the score was one or more the proportion was 32/319 (10.0%):
+
+```{r}
+test_score1(cambodia_bangladesh2)
+```
+
+Combining a symptom score of one or more with a CRP ≥ 10 mg/L increased the proportion
+with blood culture confirmed enteric fever to 32/253 (12.6%):
+
+```{r}
+test_score_CRP(cambodia_bangladesh2)
+```
+
+... a positive IgMLFA to 29/113 (25.7%):
+
+```{r}
+test_score_IgM(cambodia_bangladesh2)
+```
+
+The sensitivity, specificity, positive predictive and negative predictive value for the
+clinical score combined with a CRP ≥ 10 mg/L and a positive IgMLFA was 85.3%, 89.1%,
+33.3%, and 99.0%:
+
+```{r}
+tmp <- cambodia_bangladesh2 |> 
+  mutate(score = score >= 1 & IgM > 0 & CRP > "<10",
+         across(c(culture, score), logical2factor))
+
+list(conf_mat(tmp, culture, score),
+     bind_rows(npv(tmp, culture, score),
+               sensitivity(tmp, culture, score),
+               specificity(tmp, culture, score),
+               ppv(tmp, culture, score)))
+```
+
+#### Figure 2
+
+```{r}
+roc_curve(cambodia_bangladesh2)
+```
+
 
